@@ -6,6 +6,7 @@ use tiny_http::{Method, Response};
 
 fn main() -> io::Result<()> {
     let addr: SocketAddr = ([0, 0, 0, 0], 8998).into();
+    qr2term::print_qr(format!("where://{}", addr));
     let succ_response = || Response::new(200.into(), vec![], b"Yeet".as_ref(), Some(4), None);
     let fail_response = || Response::new(400.into(), vec![], b"Not Good".as_ref(), Some(8), None);
     let server =
