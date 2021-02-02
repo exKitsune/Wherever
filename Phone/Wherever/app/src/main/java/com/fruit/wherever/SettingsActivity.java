@@ -1,9 +1,11 @@
 package com.fruit.wherever;
 
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
@@ -12,6 +14,7 @@ import android.widget.CompoundButton;
 import android.widget.TextView;
 import android.widget.ToggleButton;
 
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.preference.PreferenceFragmentCompat;
@@ -22,13 +25,28 @@ import java.net.URL;
 
 public class SettingsActivity extends AppCompatActivity {
 
+    final String ACTION_APP_OPEN = "com.fruit.wherever.ACTION_APP_OPEN";
+
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP_MR1)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Intent intent = getIntent();
         SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
+        if(intent.getAction() == ACTION_APP_OPEN) {
+            String chosen_app = intent.getStringExtra(Intent.EXTRA_CHOSEN_COMPONENT);
+            String url = intent.getStringExtra("url");
+            return;
+        }
         if(intent.getAction() == Intent.ACTION_SEND || intent.getAction() == Intent.ACTION_VIEW) {
-            Uri uri = intent.getData();
+            Uri uri;
+            if(intent.getAction() == Intent.ACTION_SEND && intent.getType() != null) {
+                String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
+                uri = Uri.parse(sharedText);
+            } else {
+                uri = intent.getData();
+            }
+
             if(uri.getScheme() == "where") {
                 String home_ip = uri.getHost();
                 int home_port = uri.getPort();
@@ -37,7 +55,7 @@ public class SettingsActivity extends AppCompatActivity {
                 editor.putString("ip", home_ip);
                 editor.putInt("port", home_port);
                 editor.apply();
-            } else { //http https
+            } else { //if(uri.getScheme() == "http" || uri.getScheme() == "https") {
                 if (prefs.getBoolean("enabled", false)) {
                     String home_ip = prefs.getString("ip", "192.168.1.11");
                     int home_port = prefs.getInt("port", 8998);
@@ -66,11 +84,20 @@ public class SettingsActivity extends AppCompatActivity {
                     };
                     new Thread(r).start();
                 } else {
-                    Log.d("bruh", "intent chooser");
-                    Log.d("bruh", intent.toString());
-                    Intent i2 = Intent.createChooser(intent, "Open Link");
-                    Log.d("bruh", i2.toString());
-                    startActivity(i2);
+                    if(intent.getAction() != Intent.ACTION_SEND) {
+                        Intent sendIntent = new Intent();
+                        sendIntent.setAction(Intent.ACTION_SEND);
+                        sendIntent.putExtra(Intent.EXTRA_TEXT, intent.getData().toString());
+                        sendIntent.setType("text/plain");
+                        sendIntent.putExtra(Intent.EXTRA_SUBJECT, "Sharing URL");
+
+                        Intent receiver = new Intent(this, SettingsActivity.class)
+                                .putExtra("url", intent.getData().toString()).setAction(ACTION_APP_OPEN);
+                        PendingIntent pendingIntent = PendingIntent.getBroadcast(this, 0, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
+                        Intent chooser = Intent.createChooser(intent, "Share URL", pendingIntent.getIntentSender());
+                        startActivity(chooser);
+                        //startActivity(Intent.createChooser(sendIntent, "Share URL"));
+                    }
                 }
                 finish();
                 super.onBackPressed();
