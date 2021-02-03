@@ -131,7 +131,7 @@ public class SettingsActivity extends AppCompatActivity {
                     new Thread(r).start();
                 } else {
                     if (intent.getAction() != Intent.ACTION_SEND) {
-                        super.onBackPressed();
+                        //super.onBackPressed();
                         dbManager.open();
                         String host = Uri.parse(intent.getData().toString()).getHost();
                         String component = null;
@@ -152,9 +152,9 @@ public class SettingsActivity extends AppCompatActivity {
                             Log.e("bRUh", "1 "+intent.getComponent());
 
                             sendIntent.fillIn(intent, 0);
-//                            sendIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-//                            sendIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
-//                            sendIntent.setFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
+                            sendIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            sendIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                            sendIntent.setFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
                             Intent receiver = new Intent(this, SettingsActivity.class)
                                     .putExtra("url", intent.getData().toString()).setAction(ACTION_APP_OPEN);
                             PendingIntent pendingIntent = PendingIntent.getActivity(this, 1, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
@@ -168,9 +168,9 @@ public class SettingsActivity extends AppCompatActivity {
                         } else {
                             Intent finalIntent = new Intent();
                             finalIntent.fillIn(intent, 0);
-//                            finalIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-//                            finalIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
-//                            finalIntent.setFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
+                            finalIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            finalIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                            finalIntent.setFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
                             finalIntent.setComponent(ComponentName.unflattenFromString(component));
                             startActivity(finalIntent);
                         }
