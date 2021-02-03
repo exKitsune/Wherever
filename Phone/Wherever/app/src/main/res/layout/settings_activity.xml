@@ -9,4 +9,15 @@
         android:layout_height="139dp"
         android:text="ToggleButton" />
 
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="66dp" />
+
+    <Button
+        android:id="@+id/drop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:onClick="dropdb"
+        android:text="drop db" />
+
 </LinearLayout>
