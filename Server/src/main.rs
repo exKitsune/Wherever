@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 
@@ -8,6 +11,11 @@ use warp::Filter;
 
 use futures::{select, FutureExt, SinkExt, StreamExt};
 use tokio::sync::{mpsc, RwLock};
+
+use noise_protocol::{U8Array, DH};
+use noise_rust_crypto::X25519;
+
+use server::{Key, Pubkey};
 
 #[tokio::main]
 async fn main() {
@@ -20,7 +28,6 @@ async fn main() {
                 .map(|s| s.parse())
                 .unwrap_or(Ok(addr))
                 .expect("Invalid host");
-            qr2term::print_qr(format!("where://{}", addr)).unwrap();
             standalone(addr).await;
         }
         Some("relay_server") => {
@@ -49,15 +56,24 @@ async fn main() {
 }
 
 async fn standalone(addr: SocketAddr) {
+    let key = KeyWrapper(load_server_key("server_key").unwrap());
+    let pubkey = base64::encode(X25519::pubkey(&key.0));
+    qr2term::print_qr(format!("where://{}/#{}", addr, pubkey)).unwrap();
+    println!("where://{}/#{}", addr, pubkey);
     warp::serve(
         warp::path("open")
             .and(warp::post())
             .and(warp::body::content_length_limit(4096))
             .and(warp::body::bytes())
-            .and_then(|body: warp::hyper::body::Bytes| async move {
-                let url = std::str::from_utf8(&body).map_err(|_| warp::reject::reject())?;
-                launch(url.to_owned());
-                Ok::<_, warp::Rejection>("Good")
+            .and_then(move |body: warp::hyper::body::Bytes| {
+                let key = key.0.clone();
+                async move {
+                    if let Ok(msg) = server::decrypt_client_message(&*body, key) {
+                        let url = std::str::from_utf8(&msg).map_err(|_| warp::reject::reject())?;
+                        launch(url.to_owned());
+                    }
+                    Ok::<_, warp::Rejection>("Good")
+                }
             }),
     )
     .run(addr)
@@ -69,12 +85,9 @@ fn launch(url: String) {
     thread::spawn(|| open::that_in_background(url));
 }
 
-#[derive(Eq, PartialEq, Hash, Clone)]
-struct Key(u64); // TODO:
+struct Message(Vec<u8>);
 
-struct Message(String);
-
-type Registry = HashMap<Key, mpsc::Sender<Message>>;
+type Registry = HashMap<Pubkey, mpsc::Sender<Message>>;
 
 async fn relay(addr: SocketAddr) {
     let registry = Arc::new(RwLock::new(Registry::new()));
@@ -95,10 +108,14 @@ async fn relay(addr: SocketAddr) {
             .and_then(move |body: warp::hyper::body::Bytes| {
                 let registry = registry.clone();
                 async move {
-                    let body = std::str::from_utf8(&body).map_err(|_| warp::reject::reject())?;
-                    println!("AAAA {}", body);
-                    for (_key, channel) in registry.read().await.iter() {
-                        channel.send(Message(body.to_owned())).await.ok().unwrap();
+                    if let Some(key) = server::get_destination(&body) {
+                        //if let Some(channel) = registry.read().await.get(&key) {
+                        //    channel.send(Message(body.to_vec())).await.ok().unwrap();
+                        //}
+
+                        for (_key, channel) in registry.read().await.iter() {
+                            channel.send(Message(body.to_vec())).await.ok().unwrap();
+                        }
                     }
                     Ok::<_, warp::Rejection>("Good")
                 }
@@ -113,43 +130,83 @@ async fn handle_client(
 ) {
     println!("Client connected {:?}", remote);
     // get public key of client
-    let key = Key(1234); // TODO:
-                         // register key + channel in shared state
-    let (sender, mut receiver) = mpsc::channel(1);
-    state.write().await.insert(key.clone(), sender);
-    {
-        let (mut outgoing, mut incoming) = (&mut ws).split();
-        let out_ref = &mut outgoing;
-        // wait for messages
-        while let Ok(()) = select! {
-            res = receiver.recv().then(|msg| async {
-                // process message, send to
-                if let Some(msg) = msg {
-                    out_ref.send(ws::Message::text(msg.0)).await.map_err(|_|())
-                } else {
-                    Err(())
-                }
-            }) => res,
-            res = incoming.next().map(|msg| match msg {
-                Some(Ok(msg)) if msg.is_close() => Err(()),
-                Some(Ok(_)) => Ok(()),
-                Some(Err(_)) => Err(()),
-                None => Err(()),
-            }) => res
-        } {}
+    if let Some(key) = ws.next().await.map(|x| x.ok()).flatten().and_then(|msg| {
+        if msg.as_bytes().len() == 32 {
+            Some(Pubkey::from_slice(msg.as_bytes()))
+        } else {
+            None
+        }
+    }) {
+        println!("Client key: {:?}", base64::encode(&key));
+        // register key + channel in shared state
+        let (sender, mut receiver) = mpsc::channel(1);
+        state.write().await.insert(Clone::clone(&key), sender);
+        {
+            let (mut outgoing, mut incoming) = (&mut ws).split();
+            let out_ref = &mut outgoing;
+            // wait for messages
+            while let Ok(()) = select! {
+                res = receiver.recv().then(|msg| async {
+                    // process message, send to
+                    if let Some(msg) = msg {
+                        out_ref.send(ws::Message::binary(msg.0)).await.map_err(|_|())
+                    } else {
+                        Err(())
+                    }
+                }) => res,
+                res = incoming.next().map(|msg| match msg {
+                    Some(Ok(msg)) if msg.is_close() => Err(()),
+                    Some(Ok(_)) => Ok(()),
+                    Some(Err(_)) => Err(()),
+                    None => Err(()),
+                }) => res
+            } {}
+        }
+        // on close unregister key
+        state.write().await.remove(&key);
     }
-    // on close unregister key
-    state.write().await.remove(&key);
     println!("Client disconnected {:?}", remote);
     let _ = ws.close().await;
 }
 
 fn relay_client(addr: SocketAddr) {
+    let key = KeyWrapper(load_server_key("server_key").unwrap());
+    let pubkey = X25519::pubkey(&key.0);
+    let pubkey_string = base64::encode(&pubkey);
+    qr2term::print_qr(format!("where://{}/#{}", addr, pubkey_string)).unwrap();
+    println!("where://{}/#{}", addr, pubkey_string);
     let (mut socket, _resp) =
         tungstenite::client::connect(format!("ws://{}/stream", addr)).unwrap();
+    socket
+        .write_message(tungstenite::Message::Binary((&pubkey).to_vec()))
+        .unwrap();
     while let Ok(msg) = socket.read_message() {
-        if let Ok(url) = msg.into_text() {
-            launch(url)
+        if let Ok(msg) = server::decrypt_client_message(&msg.into_data(), key.clone().0) {
+            if let Some(url) = std::str::from_utf8(&msg).ok() {
+                launch(url.to_owned());
+            }
         }
+    }
+}
+
+// Key doesn't implement Clone so we do this to make our closures Clone
+struct KeyWrapper(Key);
+
+impl Clone for KeyWrapper {
+    fn clone(&self) -> Self {
+        Self(U8Array::clone(&self.0))
+    }
+}
+
+fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
+    if let Ok(mut file) = File::open(path.as_ref()) {
+        let mut key = Key::new();
+        file.read_exact(&mut *key)?;
+        Ok(key)
+    } else {
+        let mut file = File::create(path.as_ref())?;
+        let key = X25519::genkey();
+        file.write_all(&*key)?;
+        Ok(key)
     }
 }
