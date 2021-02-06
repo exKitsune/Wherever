@@ -109,11 +109,7 @@ async fn relay(addr: SocketAddr) {
                 let registry = registry.clone();
                 async move {
                     if let Some(key) = server::get_destination(&body) {
-                        //if let Some(channel) = registry.read().await.get(&key) {
-                        //    channel.send(Message(body.to_vec())).await.ok().unwrap();
-                        //}
-
-                        for (_key, channel) in registry.read().await.iter() {
+                        if let Some(channel) = registry.read().await.get(&key) {
                             channel.send(Message(body.to_vec())).await.ok().unwrap();
                         }
                     }
