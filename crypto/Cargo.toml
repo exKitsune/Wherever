@@ -1,0 +1,12 @@
+[package]
+name = "wherever_crypto"
+version = "0.1.0"
+authors = ["Jacob Hughes <j@jacobhughes.me>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+noise-rust-crypto = { version = "0.4", features = ["use-x25519", "use-blake2", "use-chacha20poly1305"], default-features = false }
+noise-protocol = "0.1"
+base64 = "0.13"
