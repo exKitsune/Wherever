@@ -1280,14 +1280,13 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "futures",
- "noise-protocol",
- "noise-rust-crypto",
  "open",
  "qr2term",
  "reqwest",
  "tokio",
  "tungstenite",
  "warp",
+ "wherever_crypto",
 ]
 
 [[package]]
