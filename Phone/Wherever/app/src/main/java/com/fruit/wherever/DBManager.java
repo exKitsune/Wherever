@@ -57,9 +57,7 @@ public class DBManager {
         String selection = DatabaseHelper.HOST + " != ? AND " + DatabaseHelper.HOST + " != ?";
         String[] selectionArgs = { "default_browser", "potential_browsers" };
         Cursor cursor = database.query(TABLE_NAME, columns, selection, selectionArgs, null, null, DatabaseHelper.ACCESSED + " DESC");
-        while (cursor.moveToNext()) {
-            Log.e("query", cursor.getString(cursor.getColumnIndex(DatabaseHelper.HOST)));
-        }
+
         return cursor;
     }
 
