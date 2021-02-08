@@ -72,25 +72,22 @@ public class SettingsActivity extends AppCompatActivity {
     final static String ACTION_DEFAULT_SET = "com.fruit.wherever.ACTION_DEFAULT_SET";
     final static String ACTION_TURN_ON = "com.fruit.wherever.ACTION_TURN_ON";
 
-    static Activity c;
-
     //used to get status to indicate on quick settings bar
-    public static boolean getStatus() {
-        SharedPreferences prefs = c.getPreferences(Context.MODE_PRIVATE);
-        return prefs.getBoolean("enabled", false);
+
+    public static SharedPreferences getSharedPreferences (Context ctxt) {
+        return ctxt.getSharedPreferences("DEFAULT_PREF", 0);
     }
 
     @RequiresApi(api = Build.VERSION_CODES.O)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        //Log.e("crypto", Arrays.toString(WhereverCrypto.genKey()));
-        c = this;
+
         Intent intent = getIntent();
         Log.e("BRUH", "intent aaaaa" + intent);
         Log.e("BRUH", "LOG INTENT: " + intentToString(intent));
         Log.d("BRUH", "bruh sender" + this.getReferrer().getHost());
-        SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
+        SharedPreferences prefs = getSharedPreferences(this.getApplicationContext());
         if(intent.getAction() != null && intent.getAction().equals(ACTION_APP_OPEN)) {
             Log.e("BRUH", "ACTION_APP_OPEN CALLBACK");
             Log.e("BRUH", intent.toString());
