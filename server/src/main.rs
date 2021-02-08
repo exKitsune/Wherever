@@ -13,8 +13,8 @@ use warp::Filter;
 use futures::{select, FutureExt, SinkExt, StreamExt};
 use tokio::sync::{mpsc, RwLock};
 
+use wherever_crypto::{Blake2b, ChaCha20Poly1305, HandshakeState, U8Array, DH, X25519};
 use wherever_crypto::{Key, Pubkey};
-use wherever_crypto::{U8Array, DH, X25519};
 
 #[tokio::main]
 async fn main() {
@@ -36,12 +36,10 @@ async fn main() {
                 .unwrap_or(Ok(addr))
                 .expect("Invalid host");
             println!("Starting relay server");
-            qr2term::print_qr(format!("where://{}", addr)).unwrap();
             relay(addr).await;
         }
         Some("relay_client") => {
             println!("Starting relay client");
-            qr2term::print_qr(format!("where://{}", addr)).unwrap();
             if let Some(addr) = args.next().and_then(|s| s.parse().ok()) {
                 relay_client(addr);
             } else {
@@ -117,12 +115,26 @@ async fn relay(addr: SocketAddr) {
                     if let Some(key) = wherever_crypto::get_destination(&body) {
                         if let Some(channel) = registry.read().await.get(&key) {
                             channel.send(Message(body.to_vec())).await.ok().unwrap();
+                            return Ok::<_, warp::Rejection>("Good");
                         }
                     }
-                    Ok::<_, warp::Rejection>("Good")
+                    Err(warp::reject::not_found())
                 }
             }));
     warp::serve(routes).run(addr).await;
+}
+
+async fn handle_client_handshake(
+    ws: &mut WebSocket,
+) -> Option<HandshakeState<X25519, ChaCha20Poly1305, Blake2b>> {
+    let mut handshake = wherever_crypto::relay_server_handshake();
+    let msg = ws.next().await?.ok()?;
+    handshake.read_message_vec(msg.as_bytes()).ok()?;
+    let send_msg = handshake.write_message_vec(&[]).ok()?;
+    ws.send(ws::Message::binary(send_msg)).await.ok()?;
+    let msg = ws.next().await?.ok()?;
+    handshake.read_message_vec(msg.as_bytes()).ok()?;
+    Some(handshake)
 }
 
 async fn handle_client(
@@ -132,13 +144,10 @@ async fn handle_client(
 ) {
     println!("Client connected {:?}", remote);
     // get public key of client
-    if let Some(key) = ws.next().await.map(|x| x.ok()).flatten().and_then(|msg| {
-        if msg.as_bytes().len() == 32 {
-            Some(Pubkey::from_slice(msg.as_bytes()))
-        } else {
-            None
-        }
-    }) {
+    if let Some((key, mut cipher)) = handle_client_handshake(&mut ws)
+        .await
+        .and_then(|hs| hs.get_rs().map(|rs| (rs, hs.get_ciphers().1)))
+    {
         println!("Client key: {:?}", base64::encode(&key));
         // register key + channel in shared state
         let (sender, mut receiver) = mpsc::channel(1);
@@ -149,9 +158,11 @@ async fn handle_client(
             // wait for messages
             while let Ok(()) = select! {
                 res = receiver.recv().then(|msg| async {
+                    let cipher = &mut cipher;
                     // process message, send to
                     if let Some(msg) = msg {
-                        out_ref.send(ws::Message::binary(msg.0)).await.map_err(|_|())
+                        let msg = cipher.encrypt_vec(&msg.0);
+                        out_ref.send(ws::Message::binary(msg)).await.map_err(|_|())
                     } else {
                         Err(())
                     }
@@ -180,18 +191,31 @@ fn relay_client(addr: SocketAddr) {
     println!("where://{}/#{}", addr, pubkey_string);
     let (mut socket, _resp) =
         tungstenite::client::connect(format!("ws://{}/stream", addr)).unwrap();
+    let mut handshake = wherever_crypto::relay_client_handshake(key.clone().0);
+    let msg = handshake.write_message_vec(&[]).unwrap();
     socket
-        .write_message(tungstenite::Message::Binary((&pubkey).to_vec()))
+        .write_message(tungstenite::Message::Binary(msg))
         .unwrap();
+    let response = socket.read_message().unwrap().into_data();
+    handshake.read_message_vec(&response).unwrap();
+    let msg = handshake.write_message_vec(&[]).unwrap();
+    socket
+        .write_message(tungstenite::Message::Binary(msg))
+        .unwrap();
+    let mut relay_cipher = handshake.get_ciphers().1;
     while let Ok(msg) = socket.read_message() {
-        if let Ok((client_key, msg)) =
-            wherever_crypto::decrypt_client_message(&msg.into_data(), key.clone().0)
-        {
-            if prompt(&mut tofu, &client_key).unwrap_or(false) {
-                if let Some(url) = std::str::from_utf8(&msg).ok() {
-                    launch(url.to_owned());
+        if let Ok(msg) = relay_cipher.decrypt_vec(&msg.into_data()) {
+            if let Ok((client_key, msg)) =
+                wherever_crypto::decrypt_client_message(&msg, key.clone().0)
+            {
+                if prompt(&mut tofu, &client_key).unwrap_or(false) {
+                    if let Some(url) = std::str::from_utf8(&msg).ok() {
+                        launch(url.to_owned());
+                    }
                 }
             }
+        } else {
+            println!("Invalid message from relay");
         }
     }
 }
@@ -297,7 +321,7 @@ struct Tofu {
 
 impl Tofu {
     fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        if let Ok(mut file) = File::open(path.as_ref()) {
+        if let Ok(file) = File::open(path.as_ref()) {
             Ok(Self {
                 allowed: BufReader::new(file)
                     .lines()
@@ -306,7 +330,7 @@ impl Tofu {
                     .collect(),
             })
         } else {
-            let mut file = File::create(path.as_ref())?;
+            let _file = File::create(path.as_ref())?;
             Ok(Self {
                 allowed: HashSet::new(),
             })

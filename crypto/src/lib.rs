@@ -1,10 +1,9 @@
 use std::convert::TryInto;
 
-use noise_protocol::patterns::noise_x;
-use noise_protocol::{HandshakeState, HandshakeStateBuilder};
-pub use noise_protocol::{U8Array, DH};
-pub use noise_rust_crypto::X25519;
-use noise_rust_crypto::{Blake2b, ChaCha20Poly1305};
+use noise_protocol::patterns::{noise_x, noise_xn};
+use noise_protocol::HandshakeStateBuilder;
+pub use noise_protocol::{HandshakeState, U8Array, DH};
+pub use noise_rust_crypto::{Blake2b, ChaCha20Poly1305, X25519};
 
 pub type Key = <X25519 as DH>::Key;
 pub type Pubkey = <X25519 as DH>::Pubkey;
@@ -61,4 +60,25 @@ pub fn get_destination(msg: &[u8]) -> Option<Pubkey> {
     } else {
         None
     }
+}
+
+pub fn relay_client_handshake(
+    static_key: Key,
+) -> HandshakeState<X25519, ChaCha20Poly1305, Blake2b> {
+    let mut handshake = HandshakeStateBuilder::new();
+    handshake
+        .set_pattern(noise_xn())
+        .set_is_initiator(true)
+        .set_s(static_key)
+        .set_prologue(&[]);
+    handshake.build_handshake_state()
+}
+
+pub fn relay_server_handshake() -> HandshakeState<X25519, ChaCha20Poly1305, Blake2b> {
+    let mut handshake = HandshakeStateBuilder::new();
+    handshake
+        .set_pattern(noise_xn())
+        .set_is_initiator(false)
+        .set_prologue(&[]);
+    handshake.build_handshake_state()
 }
