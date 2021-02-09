@@ -10,3 +10,4 @@ edition = "2018"
 noise-rust-crypto = { version = "0.4", features = ["use-x25519", "use-blake2", "use-chacha20poly1305"], default-features = false }
 noise-protocol = "0.1"
 base64 = "0.13"
+byteorder = "1.4"

@@ -1,7 +1,7 @@
 import java.util.Arrays;
 
 class WhereverCrypto {
-    private static native byte[] encryptMessage(String input, byte[] client_key, byte[] serverKey);
+    private static native byte[] encryptMessage(String input, byte[] client_key, byte[] serverKey, long sequence);
     private static native byte[] generateKey();
 
     static {

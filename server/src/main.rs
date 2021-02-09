@@ -53,8 +53,8 @@ async fn main() {
 }
 
 async fn standalone(addr: SocketAddr) {
-    let key = KeyWrapper(load_server_key("server_key").unwrap());
-    let pubkey = base64::encode(X25519::pubkey(&key.0));
+    let key = load_server_key("server_key").unwrap();
+    let pubkey = base64::encode(X25519::pubkey(&key));
     let tofu = Arc::new(RwLock::new(Tofu::load("allowed_devices.txt").unwrap()));
     qr2term::print_qr(format!("where://{}/#{}", addr, pubkey)).unwrap();
     println!("where://{}/#{}", addr, pubkey);
@@ -64,10 +64,10 @@ async fn standalone(addr: SocketAddr) {
             .and(warp::body::content_length_limit(4096))
             .and(warp::body::bytes())
             .and_then(move |body: warp::hyper::body::Bytes| {
-                let key = key.0.clone();
+                let key = key.clone();
                 let tofu = tofu.clone();
                 async move {
-                    if let Ok((client_key, msg)) =
+                    if let Ok((client_key, seq, msg)) =
                         wherever_crypto::decrypt_client_message(&*body, key)
                     {
                         if prompt_async(&tofu, &client_key).await.unwrap_or(false) {
@@ -151,7 +151,7 @@ async fn handle_client(
         println!("Client key: {:?}", base64::encode(&key));
         // register key + channel in shared state
         let (sender, mut receiver) = mpsc::channel(1);
-        state.write().await.insert(Clone::clone(&key), sender);
+        state.write().await.insert(key.clone(), sender);
         {
             let (mut outgoing, mut incoming) = (&mut ws).split();
             let out_ref = &mut outgoing;
@@ -183,15 +183,15 @@ async fn handle_client(
 }
 
 fn relay_client(addr: SocketAddr) {
-    let key = KeyWrapper(load_server_key("server_key").unwrap());
+    let key = load_server_key("server_key").unwrap();
     let mut tofu = Tofu::load("allowed_devices.txt").unwrap();
-    let pubkey = X25519::pubkey(&key.0);
+    let pubkey = X25519::pubkey(&key);
     let pubkey_string = base64::encode(&pubkey);
     qr2term::print_qr(format!("where://{}/#{}", addr, pubkey_string)).unwrap();
     println!("where://{}/#{}", addr, pubkey_string);
     let (mut socket, _resp) =
         tungstenite::client::connect(format!("ws://{}/stream", addr)).unwrap();
-    let mut handshake = wherever_crypto::relay_client_handshake(key.clone().0);
+    let mut handshake = wherever_crypto::relay_client_handshake(key.clone());
     let msg = handshake.write_message_vec(&[]).unwrap();
     socket
         .write_message(tungstenite::Message::Binary(msg))
@@ -205,8 +205,8 @@ fn relay_client(addr: SocketAddr) {
     let mut relay_cipher = handshake.get_ciphers().1;
     while let Ok(msg) = socket.read_message() {
         if let Ok(msg) = relay_cipher.decrypt_vec(&msg.into_data()) {
-            if let Ok((client_key, msg)) =
-                wherever_crypto::decrypt_client_message(&msg, key.clone().0)
+            if let Ok((client_key, seq, msg)) =
+                wherever_crypto::decrypt_client_message(&msg, key.clone())
             {
                 if prompt(&mut tofu, &client_key).unwrap_or(false) {
                     if let Some(url) = std::str::from_utf8(&msg).ok() {
@@ -220,14 +220,7 @@ fn relay_client(addr: SocketAddr) {
     }
 }
 
-// Key doesn't implement Clone so we do this to make our closures Clone
-struct KeyWrapper(Key);
 
-impl Clone for KeyWrapper {
-    fn clone(&self) -> Self {
-        Self(U8Array::clone(&self.0))
-    }
-}
 
 fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
     if let Ok(mut file) = File::open(path.as_ref()) {
@@ -243,7 +236,7 @@ fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
 }
 
 async fn prompt_async(tofu: &RwLock<Tofu>, key: &Pubkey) -> io::Result<bool> {
-    if tofu.read().await.allowed.contains(key) {
+    if let Some(_) = tofu.read().await.allowed.get(key) {
         Ok(true)
     } else {
         let stdin_a = io::stdin();
@@ -271,7 +264,7 @@ async fn prompt_async(tofu: &RwLock<Tofu>, key: &Pubkey) -> io::Result<bool> {
         };
         if accepted {
             let mut tofu = tofu.write().await;
-            tofu.allowed.insert(Clone::clone(key));
+            tofu.allowed.insert(key.clone(), 0);
             tofu.save("allowed_devices.txt")?;
             Ok(true)
         } else {
@@ -281,7 +274,7 @@ async fn prompt_async(tofu: &RwLock<Tofu>, key: &Pubkey) -> io::Result<bool> {
 }
 
 fn prompt(tofu: &mut Tofu, key: &Pubkey) -> io::Result<bool> {
-    if tofu.allowed.contains(key) {
+    if let Some(_) = tofu.allowed.get(key) {
         Ok(true)
     } else {
         let stdin_a = io::stdin();
@@ -306,7 +299,7 @@ fn prompt(tofu: &mut Tofu, key: &Pubkey) -> io::Result<bool> {
             }
         };
         if accepted {
-            tofu.allowed.insert(Clone::clone(key));
+            tofu.allowed.insert(key.clone(), 0);
             tofu.save("allowed_devices.txt")?;
             Ok(true)
         } else {
@@ -316,7 +309,7 @@ fn prompt(tofu: &mut Tofu, key: &Pubkey) -> io::Result<bool> {
 }
 
 struct Tofu {
-    allowed: HashSet<Pubkey>,
+    allowed: HashMap<Pubkey, u64>,
 }
 
 impl Tofu {
@@ -326,21 +319,29 @@ impl Tofu {
                 allowed: BufReader::new(file)
                     .lines()
                     .flat_map(|l| l)
-                    .flat_map(|line| (&base64::decode(line).ok()?[..]).try_into().ok())
+                    .flat_map(|line| {
+                        let mut split = line.split(",");
+                        let rest = split.next()?;
+                        let seq: &str = split.next()?;
+                        Some((
+                            (&base64::decode(rest).ok()?[..]).try_into().ok()?,
+                            seq.parse().ok()?,
+                        ))
+                    })
                     .collect(),
             })
         } else {
             let _file = File::create(path.as_ref())?;
             Ok(Self {
-                allowed: HashSet::new(),
+                allowed: HashMap::new(),
             })
         }
     }
     fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         let mut file = File::create(path.as_ref())?;
-        for key in self.allowed.iter().map(|k| base64::encode(k)) {
-            file.write_all(key.as_bytes())?;
-            file.write_all(b"\n")?;
+        for (key, seq) in self.allowed.iter().map(|(k, seq)| (base64::encode(k), seq)) {
+            let s = format!("{},{}\n", key, seq);
+            file.write_all(s.as_bytes())?;
         }
         Ok(())
     }
