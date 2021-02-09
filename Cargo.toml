@@ -2,5 +2,5 @@
 members = ["server", "crypto", "crypto_java"]
 
 [patch.crates-io]
-noise-protocol = { path = "../noise-rust/noise-protocol" }
-noise-rust-crypto = { path = "../noise-rust/noise-rust-crypto" }
+noise-protocol = { git = "https://github.com/exrook/noise-rust/" }
+noise-rust-crypto = { git = "https://github.com/exrook/noise-rust/" }

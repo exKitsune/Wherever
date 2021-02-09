@@ -1,7 +1,9 @@
 package com.fruit.wherever;
 
+import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
@@ -18,6 +20,7 @@ import android.widget.CompoundButton;
 import android.widget.ListView;
 import android.widget.SimpleCursorAdapter;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.widget.ToggleButton;
 
 import androidx.annotation.RequiresApi;
@@ -145,11 +148,21 @@ public class SettingsActivity extends AppCompatActivity {
 
             @Override
             public void onClick(View v) {
-                dbManager.open();
-                dbManager.drop();
-                dbManager.close();
+                new AlertDialog.Builder(SettingsActivity.this)
+                        .setTitle("Drop Database")
+                        .setMessage("Do you really want to reset all preferences?")
+                        .setIcon(android.R.drawable.ic_dialog_alert)
+                        .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
 
-                SettingsActivity.this.recreate();
+                            public void onClick(DialogInterface dialog, int whichButton) {
+                                dbManager.open();
+                                dbManager.drop();
+                                dbManager.close();
+
+                                SettingsActivity.this.recreate();
+                                Toast.makeText(SettingsActivity.this, "Reset Preferences", Toast.LENGTH_SHORT).show();
+                            }})
+                        .setNegativeButton(android.R.string.no, null).show();
             }
         });
     }
