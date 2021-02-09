@@ -95,7 +95,7 @@ public class SettingsActivity extends AppCompatActivity {
         dbManager.close();
         textView = (TextView) findViewById(R.id.conn_info);
 
-        textView.setText("Current Server: " + prefs.getString("ip", "192.168.1.11") + ":" + prefs.getInt("port", 8998));
+        textView.setText("Current Server: " + prefs.getString("ip", "127.0.0.1") + ":" + prefs.getInt("port", 8998));
 
         toggle = (ToggleButton) findViewById(R.id.on_off_button);
         toggle.setChecked(prefs.getBoolean("enabled", false));
@@ -160,7 +160,7 @@ public class SettingsActivity extends AppCompatActivity {
         Log.e("bruh", "resuming");
         adapter.notifyDataSetChanged();
         listView.refreshDrawableState();
-        textView.setText("Current Server: " + prefs.getString("ip", "192.168.1.11") + ":" + prefs.getInt("port", 8998));
+        textView.setText("Current Server: " + prefs.getString("ip", "127.0.0.1") + ":" + prefs.getInt("port", 8998));
         toggle.setChecked(prefs.getBoolean("enabled", false));
     }
 
