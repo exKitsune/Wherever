@@ -8,6 +8,8 @@ use jni::JNIEnv;
 use wherever_crypto::{Key, Pubkey};
 use wherever_crypto::{U8Array, DH, X25519};
 
+// These function definitions come from running javah WhereverCrypto
+
 #[no_mangle]
 pub extern "system" fn Java_com_fruit_wherever_WhereverCrypto_encryptMessage(
     env: JNIEnv,
@@ -43,9 +45,19 @@ pub extern "system" fn Java_com_fruit_wherever_WhereverCrypto_generateKey(
     _class: JClass,
 ) -> jbyteArray {
     let key = X25519::genkey();
-    println!("ur mom ");
-    println!("{:?}", &*key);
     env.byte_array_from_slice(&*key).unwrap()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_fruit_wherever_WhereverCrypto_getPubkey(
+    env: JNIEnv,
+    _class: JClass,
+    client_key: jbyteArray,
+) -> jbyteArray {
+    let client_key = env.convert_byte_array(client_key).unwrap();
+    let client_key = Key::from_slice(&client_key);
+    let pubkey = X25519::pubkey(&client_key);
+    env.byte_array_from_slice(&pubkey).unwrap()
 }
 
 #[cfg(test)]

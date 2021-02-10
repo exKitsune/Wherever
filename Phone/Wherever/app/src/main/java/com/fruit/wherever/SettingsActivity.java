@@ -29,6 +29,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 
 import java.util.List;
 
@@ -49,6 +50,7 @@ public class SettingsActivity extends AppCompatActivity {
     private ListView listView;
     private SimpleCursorAdapter adapter;
     private TextView textView;
+    private TextView deviceInfo;
     private ToggleButton toggle;
 
     //used to get status to indicate on quick settings bar
@@ -99,6 +101,16 @@ public class SettingsActivity extends AppCompatActivity {
         textView = (TextView) findViewById(R.id.conn_info);
 
         textView.setText("Current Server: " + prefs.getString("ip", "127.0.0.1") + ":" + prefs.getInt("port", 8998));
+
+        deviceInfo = (TextView) findViewById(R.id.device_key);
+        String client_key = prefs.getString("client_key", null);
+        if (client_key != null) {
+            byte[] client_key_bytes = Base64.getDecoder().decode(client_key);
+            byte[] client_pub_key = WhereverCrypto.getPub(client_key_bytes);
+            String client_pub_key_b64 = Base64.getEncoder().encodeToString(client_pub_key);
+
+            deviceInfo.setText("Device Key: " + client_pub_key_b64);
+        }
 
         toggle = (ToggleButton) findViewById(R.id.on_off_button);
         toggle.setChecked(prefs.getBoolean("enabled", false));
