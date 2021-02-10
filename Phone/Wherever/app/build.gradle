@@ -28,14 +28,21 @@ android {
     }
 }
 
-apply plugin: 'org.mozilla.rust-android-gradle.rust-android'
+//apply plugin: 'org.mozilla.rust-android-gradle.rust-android'
+apply plugin: "com.github.willir.rust.cargo-ndk-android"
 
-cargo {
-    module = "../../../crypto_java"
-    libname = "wherever_crypto_java"
-    targets = ["arm", "arm64", "x86", "x86_64"]
-    targetDirectory = "../../../target"
+cargoNdk {
+    module = "../../crypto_java"
+    //libname = "wherever_crypto_java"
+    //targets = ["arm", "arm64", "x86", "x86_64"]
+    targetDirectory = "../target"
 }
+//cargo {
+//    module = "../../../crypto_java"
+//    libname = "wherever_crypto_java"
+//    targets = ["arm", "arm64", "x86", "x86_64"]
+//    targetDirectory = "../../../target"
+//}
 
 dependencies {
 
@@ -47,13 +54,13 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.2.0'
 }
 
-afterEvaluate {
-    android.applicationVariants.all { variant ->
-        def productFlavor = ""
-        variant.productFlavors.each {
-            productFlavor += "${it.name.cpitalize()}"
-        }
-        def buildType = "${variant.buildType.name.capitalize()}"
-        tasks["merge${productFlavor}${buildType}JniLibFolders"].dependsOn(tasks["cargoBuild"])
-    }
-}
+//afterEvaluate {
+//    android.applicationVariants.all { variant ->
+//        def productFlavor = ""
+//        variant.productFlavors.each {
+//            productFlavor += "${it.name.cpitalize()}"
+//        }
+//        def buildType = "${variant.buildType.name.capitalize()}"
+//        tasks["merge${productFlavor}${buildType}JniLibFolders"].dependsOn(tasks["cargoBuild"])
+//    }
+//}
