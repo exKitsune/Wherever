@@ -3,7 +3,7 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -354,21 +354,26 @@ fn prompt_user(
     let mut line = String::new();
     while let Some((reply, key, seq)) = channel.blocking_recv() {
         if {
-            loop {
-                println!(
-                    "Incoming link from {}, accept? (Y/N): ",
-                    base64::encode(key)
-                );
-                stdin.read_line(&mut line)?;
-                match line.chars().next() {
-                    Some('Y') => {
-                        break true;
-                    }
-                    Some('N') => {
-                        break false;
-                    }
-                    _ => {
-                        println!("Please answer \"Y\" or \"N\"");
+            if rt.block_on(tofu.read()).check(&key, seq) {
+                reply.send(true).unwrap();
+                continue;
+            } else {
+                loop {
+                    println!(
+                        "Incoming link from {}, accept? (Y/N): ",
+                        base64::encode(key)
+                    );
+                    stdin.read_line(&mut line)?;
+                    match line.chars().next() {
+                        Some('Y') => {
+                            break true;
+                        }
+                        Some('N') => {
+                            break false;
+                        }
+                        _ => {
+                            println!("Please answer \"Y\" or \"N\"");
+                        }
                     }
                 }
             }
@@ -376,7 +381,7 @@ fn prompt_user(
             let mut tofu = rt.block_on(tofu.write());
             let valid = tofu.insert(key.clone(), seq);
             if valid {
-                tofu.save("allowed_devices.txt")?;
+                tofu.save()?;
             }
             reply.send(valid).unwrap();
         } else {
@@ -387,6 +392,7 @@ fn prompt_user(
 }
 
 struct Tofu {
+    file_path: PathBuf,
     allowed: HashMap<Pubkey, AtomicU64>,
 }
 
@@ -394,6 +400,7 @@ impl Tofu {
     fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         if let Ok(file) = File::open(path.as_ref()) {
             Ok(Self {
+                file_path: path.as_ref().to_owned(),
                 allowed: BufReader::new(file)
                     .lines()
                     .flat_map(|l| l)
@@ -411,6 +418,7 @@ impl Tofu {
         } else {
             let _file = File::create(path.as_ref())?;
             Ok(Self {
+                file_path: path.as_ref().to_owned(),
                 allowed: HashMap::new(),
             })
         }
@@ -438,9 +446,11 @@ impl Tofu {
             Entry::Occupied(mut o) => {
                 let last_seq = o.get_mut().get_mut();
                 if *last_seq < seq {
+                    println!("Seq good {} < {}", last_seq, seq);
                     *last_seq = seq;
                     true
                 } else {
+                    println!("Seq BAD  {} > {}", last_seq, seq);
                     false
                 }
             }
@@ -450,8 +460,8 @@ impl Tofu {
             }
         }
     }
-    fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        let mut file = File::create(path.as_ref())?;
+    fn save(&self) -> io::Result<()> {
+        let mut file = File::create(&self.file_path)?;
         for (key, seq) in self.allowed.iter().map(|(k, seq)| (base64::encode(k), seq)) {
             let s = format!("{},{}\n", key, seq.load(Ordering::Relaxed));
             file.write_all(s.as_bytes())?;
