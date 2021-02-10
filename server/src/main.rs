@@ -1,63 +1,146 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap};
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::thread;
 
+use tokio_tungstenite::tungstenite;
+use tokio_tungstenite::tungstenite::http::Uri;
 use warp::ws::{self, WebSocket};
 use warp::Filter;
 
 use futures::{select, FutureExt, SinkExt, StreamExt};
-use tokio::sync::{mpsc, RwLock};
+use tokio::runtime::Runtime;
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use wherever_crypto::{Blake2b, ChaCha20Poly1305, HandshakeState, U8Array, DH, X25519};
 use wherever_crypto::{Key, Pubkey};
 
-#[tokio::main]
-async fn main() {
-    let addr: SocketAddr = ([0, 0, 0, 0], 8998).into();
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        None | Some("standalone") => {
-            let addr = args
-                .next()
-                .map(|s| s.parse())
-                .unwrap_or(Ok(addr))
-                .expect("Invalid host");
-            standalone(addr).await;
+fn main() {
+    let mut opts = getopts::Options::new();
+    opts.optflag(
+        "s",
+        "standalone",
+        "Run in standalone server mode.
+        (may be combined with -c)",
+    );
+    opts.optopt(
+        "c",
+        "relay_client",
+        "Run in relay client mode.
+        (may be combined with -s)",
+        "relay_uri",
+    );
+    opts.optflag("r", "relay", "Run in relay server mode");
+    opts.optopt(
+        "a",
+        "address",
+        "Address to listen on for -s or -r
+        Defaults to 0.0.0.0:8998",
+        "listen_address",
+    );
+    opts.optopt(
+        "k",
+        "server_key",
+        "File the server's private key should be stored in.
+        Defaults to \"server_key\"",
+        "key_file",
+    );
+    opts.optopt(
+        "l",
+        "allowed_list",
+        "File the list of allowed clients should be stored in.
+        Defaults to \"allowed.txt\"",
+        "list_file",
+    );
+    opts.optflag("h", "help", "Show this help message");
+    if let Ok(matches) = opts.parse(std::env::args_os()) {
+        if !matches.opt_present("h") {
+            return start(matches);
         }
-        Some("relay_server") => {
-            let addr = args
-                .next()
-                .map(|s| s.parse())
-                .unwrap_or(Ok(addr))
-                .expect("Invalid host");
-            println!("Starting relay server");
-            relay(addr).await;
+    }
+
+    let program_name = std::env::args().next().unwrap_or("".to_owned());
+    println!("{}", opts.short_usage(&program_name));
+
+    println!(
+        "{}",
+        opts.usage("\nDefaults to standalone mode if no mode args are passed.")
+    );
+}
+
+fn start(matches: getopts::Matches) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let bind_addr = matches
+        .opt_get_default("a", SocketAddr::from(([0, 0, 0, 0], 8998)))
+        .unwrap();
+
+    if matches.opt_present("r") {
+        rt.block_on(relay(bind_addr));
+    } else {
+        let (send, recv) = mpsc::channel(10);
+        let standalone_explicit = matches.opt_present("s");
+
+        let keyfile = matches.opt_str("k").unwrap_or("server_key".to_owned());
+        let key = load_server_key(keyfile).unwrap();
+        let pubkey = base64::encode(X25519::pubkey(&key));
+        let tofu_file = matches
+            .opt_str("allowed_list")
+            .unwrap_or("allowed.txt".to_owned());
+        let tofu = Arc::new(RwLock::new(Tofu::load(tofu_file).unwrap()));
+
+        let relay_server_uri: Option<Uri> = matches.opt_get("c").unwrap();
+        let launch_standalone = relay_server_uri.is_none() || standalone_explicit;
+
+        if let Some(relay_server_uri) = relay_server_uri {
+            println!("Launching relay client");
+            let connect_url = format!(
+                "where://{}/#{}",
+                relay_server_uri.authority().unwrap(),
+                pubkey
+            );
+            qr2term::print_qr(&connect_url).unwrap();
+            println!("Connect over relay via: {}", connect_url);
+            rt.spawn(relay_client(
+                key.clone(),
+                relay_server_uri,
+                tofu.clone(),
+                send.clone(),
+            ));
         }
-        Some("relay_client") => {
-            println!("Starting relay client");
-            if let Some(addr) = args.next().and_then(|s| s.parse().ok()) {
-                relay_client(addr);
-            } else {
-                eprintln!("Relay server address required");
+        if launch_standalone {
+            println!("Launching standalone server");
+            if bind_addr.ip() != IpAddr::from([0, 0, 0, 0]) {
+                let connect_url = format!("where://{}/#{}", bind_addr, pubkey);
+                qr2term::print_qr(&connect_url).unwrap();
+                println!("Connect directly via: {}", connect_url);
             }
+            rt.spawn(standalone(
+                key.clone(),
+                bind_addr,
+                tofu.clone(),
+                send.clone(),
+            ));
         }
-        Some(arg) => {
-            eprintln!("Unrecognized argument: \"{}\"", arg);
-        }
+        prompt_user(rt, &*tofu, recv).unwrap()
     }
 }
 
-async fn standalone(addr: SocketAddr) {
-    let key = load_server_key("server_key").unwrap();
-    let pubkey = base64::encode(X25519::pubkey(&key));
-    let tofu = Arc::new(RwLock::new(Tofu::load("allowed_devices.txt").unwrap()));
-    qr2term::print_qr(format!("where://{}/#{}", addr, pubkey)).unwrap();
-    println!("where://{}/#{}", addr, pubkey);
+async fn standalone(
+    key: Key,
+    addr: SocketAddr,
+    tofu: Arc<RwLock<Tofu>>,
+    channel: mpsc::Sender<(oneshot::Sender<bool>, Pubkey, u64)>,
+) {
     warp::serve(
         warp::path("open")
             .and(warp::post())
@@ -66,11 +149,15 @@ async fn standalone(addr: SocketAddr) {
             .and_then(move |body: warp::hyper::body::Bytes| {
                 let key = key.clone();
                 let tofu = tofu.clone();
+                let channel = channel.clone();
                 async move {
                     if let Ok((client_key, seq, msg)) =
                         wherever_crypto::decrypt_client_message(&*body, key)
                     {
-                        if prompt_async(&tofu, &client_key).await.unwrap_or(false) {
+                        if prompt_async(&tofu, channel, &client_key, seq)
+                            .await
+                            .unwrap_or(false)
+                        {
                             let url =
                                 std::str::from_utf8(&msg).map_err(|_| warp::reject::reject())?;
                             launch(url.to_owned());
@@ -182,33 +269,39 @@ async fn handle_client(
     let _ = ws.close().await;
 }
 
-fn relay_client(addr: SocketAddr) {
-    let key = load_server_key("server_key").unwrap();
-    let mut tofu = Tofu::load("allowed_devices.txt").unwrap();
-    let pubkey = X25519::pubkey(&key);
-    let pubkey_string = base64::encode(&pubkey);
-    qr2term::print_qr(format!("where://{}/#{}", addr, pubkey_string)).unwrap();
-    println!("where://{}/#{}", addr, pubkey_string);
-    let (mut socket, _resp) =
-        tungstenite::client::connect(format!("ws://{}/stream", addr)).unwrap();
+async fn relay_client(
+    key: Key,
+    addr: Uri,
+    tofu: Arc<RwLock<Tofu>>,
+    channel: mpsc::Sender<(oneshot::Sender<bool>, Pubkey, u64)>,
+) {
+    let (mut socket, _resp) = tokio_tungstenite::connect_async(format!("ws://{}/stream", addr))
+        .await
+        .unwrap();
+
     let mut handshake = wherever_crypto::relay_client_handshake(key.clone());
     let msg = handshake.write_message_vec(&[]).unwrap();
     socket
-        .write_message(tungstenite::Message::Binary(msg))
+        .send(tungstenite::Message::Binary(msg))
+        .await
         .unwrap();
-    let response = socket.read_message().unwrap().into_data();
+    let response = socket.next().await.unwrap().unwrap().into_data();
     handshake.read_message_vec(&response).unwrap();
     let msg = handshake.write_message_vec(&[]).unwrap();
     socket
-        .write_message(tungstenite::Message::Binary(msg))
+        .send(tungstenite::Message::Binary(msg))
+        .await
         .unwrap();
     let mut relay_cipher = handshake.get_ciphers().1;
-    while let Ok(msg) = socket.read_message() {
+    while let Some(msg) = socket.next().await.and_then(|x| x.ok()) {
         if let Ok(msg) = relay_cipher.decrypt_vec(&msg.into_data()) {
             if let Ok((client_key, seq, msg)) =
                 wherever_crypto::decrypt_client_message(&msg, key.clone())
             {
-                if prompt(&mut tofu, &client_key).unwrap_or(false) {
+                if prompt_async(&tofu, channel.clone(), &client_key, seq)
+                    .await
+                    .unwrap_or(false)
+                {
                     if let Some(url) = std::str::from_utf8(&msg).ok() {
                         launch(url.to_owned());
                     }
@@ -219,8 +312,6 @@ fn relay_client(addr: SocketAddr) {
         }
     }
 }
-
-
 
 fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
     if let Ok(mut file) = File::open(path.as_ref()) {
@@ -235,14 +326,34 @@ fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
     }
 }
 
-async fn prompt_async(tofu: &RwLock<Tofu>, key: &Pubkey) -> io::Result<bool> {
-    if let Some(_) = tofu.read().await.allowed.get(key) {
+async fn prompt_async(
+    tofu: &RwLock<Tofu>,
+    channel: mpsc::Sender<(oneshot::Sender<bool>, Pubkey, u64)>,
+    key: &Pubkey,
+    seq: u64,
+) -> io::Result<bool> {
+    if tofu.read().await.check(key, seq) {
         Ok(true)
     } else {
-        let stdin_a = io::stdin();
-        let accepted = {
-            let mut stdin = stdin_a.lock();
-            let mut line = String::new();
+        let (send, recv) = oneshot::channel();
+        if let Ok(()) = channel.try_send((send, key.clone(), seq)) {
+            Ok(recv.await.unwrap())
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+fn prompt_user(
+    rt: Runtime,
+    tofu: &RwLock<Tofu>,
+    mut channel: mpsc::Receiver<(oneshot::Sender<bool>, Pubkey, u64)>,
+) -> io::Result<()> {
+    let stdin_a = io::stdin();
+    let mut stdin = stdin_a.lock();
+    let mut line = String::new();
+    while let Some((reply, key, seq)) = channel.blocking_recv() {
+        if {
             loop {
                 println!(
                     "Incoming link from {}, accept? (Y/N): ",
@@ -261,55 +372,22 @@ async fn prompt_async(tofu: &RwLock<Tofu>, key: &Pubkey) -> io::Result<bool> {
                     }
                 }
             }
-        };
-        if accepted {
-            let mut tofu = tofu.write().await;
-            tofu.allowed.insert(key.clone(), 0);
-            tofu.save("allowed_devices.txt")?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-fn prompt(tofu: &mut Tofu, key: &Pubkey) -> io::Result<bool> {
-    if let Some(_) = tofu.allowed.get(key) {
-        Ok(true)
-    } else {
-        let stdin_a = io::stdin();
-        let mut stdin = stdin_a.lock();
-        let mut line = String::new();
-        let accepted = loop {
-            println!(
-                "Incoming link from {}, accept? (Y/N): ",
-                base64::encode(key)
-            );
-            stdin.read_line(&mut line)?;
-            match line.chars().next() {
-                Some('Y') => {
-                    break true;
-                }
-                Some('N') => {
-                    break false;
-                }
-                _ => {
-                    println!("Please answer \"Y\" or \"N\"");
-                }
+        } {
+            let mut tofu = rt.block_on(tofu.write());
+            let valid = tofu.insert(key.clone(), seq);
+            if valid {
+                tofu.save("allowed_devices.txt")?;
             }
-        };
-        if accepted {
-            tofu.allowed.insert(key.clone(), 0);
-            tofu.save("allowed_devices.txt")?;
-            Ok(true)
+            reply.send(valid).unwrap();
         } else {
-            Ok(false)
+            reply.send(false).unwrap();
         }
     }
+    Ok(())
 }
 
 struct Tofu {
-    allowed: HashMap<Pubkey, u64>,
+    allowed: HashMap<Pubkey, AtomicU64>,
 }
 
 impl Tofu {
@@ -325,7 +403,7 @@ impl Tofu {
                         let seq: &str = split.next()?;
                         Some((
                             (&base64::decode(rest).ok()?[..]).try_into().ok()?,
-                            seq.parse().ok()?,
+                            AtomicU64::new(seq.parse().ok()?),
                         ))
                     })
                     .collect(),
@@ -337,10 +415,45 @@ impl Tofu {
             })
         }
     }
+    /// Check if pubkey is valid, if so check seq number valid, if so set last seq number
+    fn check(&self, key: &Pubkey, seq: u64) -> bool {
+        if let Some(last_seq) = self.allowed.get(key) {
+            if let Ok(_) = last_seq.fetch_update(Ordering::AcqRel, Ordering::Acquire, |last_seq| {
+                if last_seq < seq {
+                    Some(seq)
+                } else {
+                    None
+                }
+            }) {
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+    fn insert(&mut self, key: Pubkey, seq: u64) -> bool {
+        match self.allowed.entry(key) {
+            Entry::Occupied(mut o) => {
+                let last_seq = o.get_mut().get_mut();
+                if *last_seq < seq {
+                    *last_seq = seq;
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(v) => {
+                v.insert(seq.into());
+                true
+            }
+        }
+    }
     fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         let mut file = File::create(path.as_ref())?;
         for (key, seq) in self.allowed.iter().map(|(k, seq)| (base64::encode(k), seq)) {
-            let s = format!("{},{}\n", key, seq);
+            let s = format!("{},{}\n", key, seq.load(Ordering::Relaxed));
             file.write_all(s.as_bytes())?;
         }
         Ok(())
