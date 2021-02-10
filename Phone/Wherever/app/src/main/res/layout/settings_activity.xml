@@ -6,19 +6,22 @@
     <ToggleButton
         android:id="@+id/on_off_button"
         android:layout_width="match_parent"
-        android:layout_height="139dp"
+        android:layout_height="0dp"
+        android:layout_weight="5"
         android:text="ToggleButton" />
 
     <TextView
         android:id="@+id/conn_info"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
+        android:layout_height="0dp"
+        android:layout_weight="2"
         android:text="Current Server:" />
 
     <ListView
         android:id="@+id/listView"
         android:layout_width="wrap_content"
-        android:layout_height="340dp"
+        android:layout_height="0"
+        android:layout_weight="10"
         android:clickable="true"
         android:isScrollContainer="true" />
 
@@ -26,17 +29,25 @@
         android:id="@+id/set_default"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_weight=".5"
         android:text="SET DEFAULT BROWSER" />
 
     <Space
         android:layout_width="match_parent"
-        android:layout_height="36dp" />
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
     <Button
         android:id="@+id/drop"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_weight=".3"
         android:onClick="dropdb"
         android:text="drop db" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_weight="2" />
 
 </LinearLayout>
