@@ -8,7 +8,7 @@ import android.widget.Button;
 import android.widget.TextView;
 
 public class ModifyRecord extends Activity implements View.OnClickListener {
-    DBManager dbManager = new DBManager(this);
+
     TextView modTextView;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -36,9 +36,7 @@ public class ModifyRecord extends Activity implements View.OnClickListener {
                 break;
             case R.id.delete_btn:
                 String host = modTextView.getText().toString();
-                dbManager.open();
-                dbManager.delete(host);
-                dbManager.close();
+                DBManager.getInstance(getApplicationContext()).delete(host);
                 this.returnHome();
                 break;
         }

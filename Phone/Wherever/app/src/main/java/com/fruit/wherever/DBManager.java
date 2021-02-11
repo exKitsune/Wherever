@@ -18,50 +18,66 @@ public class DBManager {
 
     private SQLiteDatabase database;
 
-    public DBManager(Context c) {
+    private static DBManager instance = null;
+
+    private DBManager(Context c) {
         context = c;
     }
 
-    public DBManager open() throws SQLException {
+    public static DBManager getInstance(Context c){
+        if (instance == null){
+            instance = new DBManager(c);
+        }
+        return instance;
+    }
+
+    private DBManager open() throws SQLException {
         dbHelper = new DatabaseHelper(context);
         database = dbHelper.getWritableDatabase();
         return this;
     }
 
-    public void close() {
+    private void close() {
         dbHelper.close();
     }
 
     public void insert(String host, String component, long accessed ) {
+        open();
         host = host.toLowerCase();
         ContentValues contentValue = new ContentValues();
         contentValue.put(DatabaseHelper.HOST, host);
         contentValue.put(DatabaseHelper.COMPONENT, component);
         contentValue.put(DatabaseHelper.ACCESSED, accessed);
         database.insert(TABLE_NAME, null, contentValue);
+        close();
     }
 
     public Cursor fetch(String host) {
+        open();
         host = host.toLowerCase();
         String[] columns = new String[] { DatabaseHelper.HOST, DatabaseHelper.COMPONENT, DatabaseHelper.ACCESSED };
         String selection = DatabaseHelper.HOST + " = ?";
         String[] selectionArgs = { host };
 
         Cursor cursor = database.query(TABLE_NAME, columns, selection, selectionArgs, null, null, null);
+        close();
 
         return cursor;
     }
 
     public Cursor fetchAll() {
+        open();
         String[] columns = new String[] { DatabaseHelper.HOST, DatabaseHelper.COMPONENT, DatabaseHelper.ACCESSED };
         String selection = DatabaseHelper.HOST + " != ? AND " + DatabaseHelper.HOST + " != ?";
         String[] selectionArgs = { "default_browser", "potential_browsers" };
         Cursor cursor = database.query(TABLE_NAME, columns, selection, selectionArgs, null, null, DatabaseHelper.ACCESSED + " DESC");
+        close();
 
         return cursor;
     }
 
     public int update(String host, String component, long accessed) {
+        open();
         host = host.toLowerCase();
         ContentValues contentValues = new ContentValues();
         //contentValues.put(DatabaseHelper.HOST, host);
@@ -71,6 +87,7 @@ public class DBManager {
         String[] selectionArgs = { host };
 
         int i = database.update(TABLE_NAME, contentValues, selection, selectionArgs);
+        close();
         return i;
     }
 
@@ -87,14 +104,18 @@ public class DBManager {
     }
 
     public void delete(String host) {
+        open();
         host = host.toLowerCase();
         String selection = DatabaseHelper.HOST + " LIKE ?";
         String[] selectionArgs = { host };
         database.delete(TABLE_NAME, selection, selectionArgs);
+        close();
     }
 
     public void drop() {
+        open();
         dbHelper.onDrop(database);
+        close();
     }
 
 }
