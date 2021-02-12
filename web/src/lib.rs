@@ -51,6 +51,22 @@ fn load_tofu(storage: &web_sys::Storage) -> Tofu {
 }
 
 #[wasm_bindgen]
+pub fn qr_code() -> String {
+    let storage = web_sys::window().unwrap().local_storage().unwrap().unwrap();
+    let key = load_key(&storage);
+    let pubkey = X25519::pubkey(&key);
+    use qrcode::{render::svg, QrCode};
+    let code = QrCode::new(format!("where://10.9.0.3:3543/#{}", base64::encode(pubkey))).unwrap();
+    let string = code
+        .render()
+        .min_dimensions(300, 300)
+        .dark_color(svg::Color("#000000"))
+        .light_color(svg::Color("#FFFFFF"))
+        .build();
+    string
+}
+
+#[wasm_bindgen]
 pub fn new_state() -> JSState {
     let storage = web_sys::window().unwrap().local_storage().unwrap().unwrap();
     let key = load_key(&storage);

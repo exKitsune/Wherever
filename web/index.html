@@ -20,14 +20,12 @@
         ws.binaryType = "arraybuffer";
         return new Promise((resolve, reject) => {
             ws.onopen = (msg) => {
-                console.log("help me");
                 ws.onopen = undefined;
                 ws.onerror = undefined;
                 console.log(ws);
                 resolve(ws)
             };
             ws.onerror = (err) => {
-                console.log("help meee");
                 ws.onopen = undefined;
                 ws.onerror = undefined;
                 reject(err)
@@ -38,6 +36,9 @@
         await init();
 
         let state = crypto.new_state();
+
+        let qr = crypto.qr_code();
+        document.getElementById('qrcode').outerHTML += qr;
 
         let socket = await open("ws://127.0.0.1:3543/stream");
 
@@ -62,3 +63,4 @@
 
 <p> I'm E
 <p id="result"></p>
+<div id="qrcode"></div>
