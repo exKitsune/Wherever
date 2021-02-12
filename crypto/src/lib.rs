@@ -2,10 +2,13 @@ use std::convert::TryInto;
 
 use byteorder::{ByteOrder, NetworkEndian, WriteBytesExt};
 
+pub use noise_protocol;
+pub use noise_rust_crypto;
+
 use noise_protocol::patterns::{noise_x, noise_xn};
 use noise_protocol::HandshakeStateBuilder;
-pub use noise_protocol::{HandshakeState, U8Array, DH};
-pub use noise_rust_crypto::{Blake2b, ChaCha20Poly1305, X25519};
+use noise_protocol::{HandshakeState, DH};
+use noise_rust_crypto::{Blake2b, ChaCha20Poly1305, X25519};
 
 pub type Key = <X25519 as DH>::Key;
 pub type Pubkey = <X25519 as DH>::Pubkey;

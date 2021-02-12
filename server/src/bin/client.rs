@@ -1,8 +1,8 @@
 use std::convert::TryInto;
 use std::io;
 
-use wherever_crypto::DH;
-use wherever_crypto::X25519;
+use wherever_crypto::noise_protocol::DH;
+use wherever_crypto::noise_rust_crypto::X25519;
 use wherever_crypto::{encrypt_client_message, Pubkey};
 
 fn main() -> io::Result<()> {

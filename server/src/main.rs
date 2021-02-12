@@ -19,7 +19,8 @@ use futures::{select, FutureExt, SinkExt, StreamExt};
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-use wherever_crypto::{Blake2b, ChaCha20Poly1305, HandshakeState, U8Array, DH, X25519};
+use wherever_crypto::noise_protocol::{HandshakeState, U8Array, DH};
+use wherever_crypto::noise_rust_crypto::{Blake2b, ChaCha20Poly1305, X25519};
 use wherever_crypto::{Key, Pubkey};
 
 fn main() {
@@ -188,6 +189,7 @@ async fn relay(addr: SocketAddr) {
         .map({
             let registry = registry.clone();
             move |ws: warp::ws::Ws, addr| {
+                println!("Connection from {:?}", addr);
                 let registry = registry.clone();
                 ws.on_upgrade(move |websocket| handle_client(websocket, registry, addr))
             }
