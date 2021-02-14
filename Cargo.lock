@@ -1376,11 +1376,13 @@ dependencies = [
  "getopts",
  "open",
  "qr2term",
+ "rand 0.8.3",
  "reqwest",
  "tokio",
  "tokio-tungstenite",
  "warp",
  "wherever_crypto",
+ "wherever_web_compiled",
 ]
 
 [[package]]
@@ -1951,6 +1953,10 @@ dependencies = [
  "web-sys",
  "wherever_crypto",
 ]
+
+[[package]]
+name = "wherever_web_compiled"
+version = "0.1.0"
 
 [[package]]
 name = "winapi"

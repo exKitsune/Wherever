@@ -17,8 +17,10 @@ futures = { version = "0.3" }
 tokio-tungstenite = "0.13"
 base64 = "0.13"
 getopts = "0.2"
+rand = { version = "0.8", features = ["small_rng"] }
 
 wherever_crypto = { path = "../crypto" }
+wherever_web_compiled = { path = "../web_compiled" }
 
 [[bin]]
 name = "server"
