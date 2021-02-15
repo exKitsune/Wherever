@@ -62,6 +62,7 @@ public class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        DBManager.getInstance(getApplicationContext()).open();
 
         prefs = getSharedPreferences(getApplicationContext());
 
@@ -163,7 +164,9 @@ public class SettingsActivity extends AppCompatActivity {
                         .setNegativeButton(android.R.string.yes, new DialogInterface.OnClickListener() {
 
                             public void onClick(DialogInterface dialog, int whichButton) {
+                                DBManager.getInstance(getApplicationContext()).open();
                                 DBManager.getInstance(getApplicationContext()).drop();
+                                DBManager.getInstance(getApplicationContext()).close();
 
                                 SettingsActivity.this.recreate();
                                 Toast.makeText(SettingsActivity.this, "Reset Preferences", Toast.LENGTH_SHORT).show();
@@ -186,6 +189,7 @@ public class SettingsActivity extends AppCompatActivity {
                         .setPositiveButton(android.R.string.yes, null).show();
             }
         });
+        DBManager.getInstance(getApplicationContext()).close();
     }
 
     @Override
@@ -197,7 +201,6 @@ public class SettingsActivity extends AppCompatActivity {
         textView.setText("Current Server: " + prefs.getString("ip", "127.0.0.1") + ":" + prefs.getInt("port", 8998));
         toggle.setChecked(prefs.getBoolean("enabled", false));
     }
-
 
     public static String intentToString(Intent intent) {
         if (intent == null) {
