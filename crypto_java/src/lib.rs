@@ -5,8 +5,9 @@ use jni::sys::{jbyteArray, jlong};
 
 use jni::JNIEnv;
 
+use wherever_crypto::noise_protocol::{U8Array, DH};
+use wherever_crypto::noise_rust_crypto::X25519;
 use wherever_crypto::{Key, Pubkey};
-use wherever_crypto::{U8Array, DH, X25519};
 
 // These function definitions come from running javah WhereverCrypto
 

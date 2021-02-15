@@ -1,0 +1,16 @@
+[package]
+name = "websocket_wasm"
+version = "0.1.0"
+authors = ["Jacob Hughes <j@distanthills.org>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+web-sys = { version = "0.3", features = ["WebSocket", "BinaryType", "MessageEvent"] }
+js-sys = "0.3"
+wasm-bindgen-futures = "0.4.20"
+wasm-bindgen = { version = "0.2", features = ["nightly"] }
+futures-core = "0.3"
+futures-util = "0.3"
+futures-sink = "0.3"
