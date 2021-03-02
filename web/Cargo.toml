@@ -1,7 +1,7 @@
 [package]
 name = "wherever_web"
 version = "0.1.0"
-authors = ["Jacob Hughes <j@jacobhughes.me>"]
+authors = ["Jacob Hughes <j@distanthills.org>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -12,8 +12,10 @@ crate-type = ["cdylib"]
 [dependencies]
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 wherever_crypto = { path = "../crypto/" }
+wherever = { path = "../wherever/", features = ["wasm"]}
 getrandom = { version = "0.2.2", features = ["js"] }
-web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Element", "Location"] }
+web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Element", "Location", "HtmlElement", "HtmlInputElement", "Node", "NodeList", "RequestInit"] }
+js-sys = "0.3"
 base64 = "0.13"
 serde = {version = "1", features = ["derive"]}
 qrcode = "0.12"

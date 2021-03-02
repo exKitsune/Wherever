@@ -5,7 +5,7 @@ use byteorder::{ByteOrder, NetworkEndian, WriteBytesExt};
 pub use noise_protocol;
 pub use noise_rust_crypto;
 
-use noise_protocol::patterns::{noise_x, noise_xn};
+use noise_protocol::patterns::{noise_x, noise_xn, noise_xx};
 use noise_protocol::HandshakeStateBuilder;
 use noise_protocol::{HandshakeState, DH};
 use noise_rust_crypto::{Blake2b, ChaCha20Poly1305, X25519};
@@ -92,4 +92,87 @@ pub fn relay_server_handshake() -> HandshakeState<X25519, ChaCha20Poly1305, Blak
         .set_is_initiator(false)
         .set_prologue(&[]);
     handshake.build_handshake_state()
+}
+
+pub fn discovery_receiver_handshake(
+    static_key: Key,
+    words: &str,
+) -> HandshakeState<X25519, ChaCha20Poly1305, Blake2b> {
+    let mut handshake = HandshakeStateBuilder::new();
+    handshake
+        .set_pattern(noise_xx())
+        .set_is_initiator(true)
+        .set_prologue(words.as_bytes())
+        .set_s(static_key);
+    handshake.build_handshake_state()
+}
+
+pub fn discovery_sender_handshake(
+    static_key: Key,
+    words: &str,
+) -> HandshakeState<X25519, ChaCha20Poly1305, Blake2b> {
+    let mut handshake = HandshakeStateBuilder::new();
+    handshake
+        .set_pattern(noise_xx())
+        .set_is_initiator(false)
+        .set_prologue(words.as_bytes())
+        .set_s(static_key);
+    handshake.build_handshake_state()
+}
+
+pub struct Initiator;
+pub struct Responder;
+pub struct DiscoveryProtocol<Side> {
+    handshake: HandshakeState<X25519, ChaCha20Poly1305, Blake2b>,
+    _side: Side,
+}
+
+impl DiscoveryProtocol<Initiator> {
+    pub fn initiator(static_key: Key, words: &str) -> (Self, Vec<u8>) {
+        let mut handshake = HandshakeStateBuilder::new();
+        handshake
+            .set_pattern(noise_xx())
+            .set_is_initiator(true)
+            .set_prologue(words.as_bytes())
+            .set_s(static_key);
+        let mut handshake = handshake.build_handshake_state();
+        let msg = handshake.write_message_vec(&[]).unwrap();
+        (
+            Self {
+                handshake,
+                _side: Initiator,
+            },
+            msg,
+        )
+    }
+    pub fn read_message(mut self, msg: &[u8]) -> Option<(Pubkey, Vec<u8>)> {
+        self.handshake.read_message_vec(msg).ok()?;
+        let msg = self.handshake.write_message_vec(&[]).ok()?;
+        Some((self.handshake.get_rs()?, msg))
+    }
+}
+
+impl DiscoveryProtocol<Responder> {
+    pub fn responder(static_key: Key, words: &str, msg: &[u8]) -> Option<(Self, Vec<u8>)> {
+        let mut handshake = HandshakeStateBuilder::new();
+        handshake
+            .set_pattern(noise_xx())
+            .set_is_initiator(false)
+            .set_prologue(words.as_bytes())
+            .set_s(static_key);
+        let mut handshake = handshake.build_handshake_state();
+        handshake.read_message_vec(msg).ok()?;
+        let msg = handshake.write_message_vec(&[]).unwrap();
+        Some((
+            Self {
+                handshake,
+                _side: Responder,
+            },
+            msg,
+        ))
+    }
+    pub fn read_message(mut self, msg: &[u8]) -> Option<Pubkey> {
+        self.handshake.read_message_vec(msg).ok()?;
+        Some(self.handshake.get_rs()?)
+    }
 }
