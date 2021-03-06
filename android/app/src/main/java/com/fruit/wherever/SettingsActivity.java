@@ -70,10 +70,10 @@ public class SettingsActivity extends AppCompatActivity {
         //create visible window
         Log.e("BRUH", "bruh settings");
         setContentView(R.layout.settings_activity);
-        ActionBar actionBar = getSupportActionBar();
-        if (actionBar != null) {
-            actionBar.setDisplayHomeAsUpEnabled(true);
-        }
+//        ActionBar actionBar = getSupportActionBar();
+//        if (actionBar != null) {
+//            actionBar.setDisplayHomeAsUpEnabled(true);
+//        }
 
         //last accessed time in db is important here, we sort the entries in the db by last accessed
         // this makes it easier to remove entries in case you misclick
@@ -147,7 +147,9 @@ public class SettingsActivity extends AppCompatActivity {
                     pbList.add(c.getComponent().flattenToString());
                 }
                 potential_browsers = String.join(",", pbList);
+                DBManager.getInstance(getApplicationContext()).open();
                 DBManager.getInstance(getApplicationContext()).put("POTENTIAL_BROWSERS", potential_browsers, 0);
+                DBManager.getInstance(getApplicationContext()).close();
                 startActivity(cci.first);
             }
         }));

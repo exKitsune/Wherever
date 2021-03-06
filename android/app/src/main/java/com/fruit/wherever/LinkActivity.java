@@ -74,6 +74,7 @@ public class LinkActivity extends AppCompatActivity {
             if(!chosen_app.flattenToString().equals("com.fruit.wherever/com.fruit.wherever.LinkActivity")) {
                 DBManager.getInstance(getApplicationContext()).put("DEFAULT_BROWSER", chosen_app.flattenToString(), 0);
             }
+            finishAndRemoveTask();
         }
 
         //primary portion of the app
@@ -199,22 +200,27 @@ public class LinkActivity extends AppCompatActivity {
                     };
                     new Thread(r).start();
                 } else {
+                    //SEND happens when we share it to Wherever, we don't want to handle this because things can get recursive
                     if (intent.getAction() != Intent.ACTION_SEND) {
                         //super.onBackPressed();
                         String host = Uri.parse(intent.getData().toString()).getHost();
                         String component = null;
-                        Cursor cursor = DBManager.getInstance(getApplicationContext()).fetch(host);
-                        while (cursor.moveToNext()) {
-                            component = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT));
+                        if(host != null) { //malformed url with no host
+                            Cursor cursor = DBManager.getInstance(getApplicationContext()).fetch(host);
+                            while (cursor.moveToNext()) {
+                                component = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT));
+                            }
+                            cursor.close();
                         }
-                        cursor.close();
+                        //component stays null if nothing found in db
 
-                        Log.d("bruh host", host);
+                        Log.d("bruh host", host == null ? "null" : host);
                         Log.d("bruh component", component == null ? "null" : component);
                         boolean sameComponent = false;
                         if (component != null) {
                             sameComponent = component.split("/")[0].equals(this.getReferrer().getHost());
                         }
+
                         if ((component == null) || sameComponent) {
                             Intent sendIntent = new Intent();
 
@@ -239,7 +245,7 @@ public class LinkActivity extends AppCompatActivity {
                             ComponentName default_browser_full = null;
                             String potential_browsers = null;
 
-                            cursor = DBManager.getInstance(getApplicationContext()).fetch("DEFAULT_BROWSER");
+                            Cursor cursor = DBManager.getInstance(getApplicationContext()).fetch("DEFAULT_BROWSER");
 
                             while (cursor.moveToNext()) {
                                 default_browser_full = ComponentName.unflattenFromString(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT)));
@@ -273,9 +279,9 @@ public class LinkActivity extends AppCompatActivity {
                                 }
 
                                 Pair<Intent, List<Intent>> cci = generateCustomChooserIntent(getApplicationContext(), sendIntent, final_blacklist, pendingIntent, "Send Link");
-                                if(cci.second.size() > 1 && !sameComponent) {
+                                if(cci.second.size() > 1) { //if more than 1 browser create chooser
                                     startActivity(cci.first);
-                                } else {
+                                } else { //1 browser exists but isn't set as default, just choose it
                                     sendIntent.setComponent(cci.second.get(0).getComponent());
                                     startActivity(sendIntent);
                                 }
