@@ -1,25 +1,20 @@
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
-use std::convert::TryInto;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
+use std::path::Path;
+use std::sync::Arc;
 use std::thread;
 
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::http::Uri;
 use warp::ws::{self, WebSocket};
 use warp::Filter;
 
-use futures::{pin_mut, select, FutureExt, SinkExt, StreamExt};
+use futures::{select, FutureExt, SinkExt, StreamExt};
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
@@ -98,7 +93,8 @@ fn start(matches: getopts::Matches) {
         let standalone_explicit = matches.opt_present("s");
 
         let keyfile = matches.opt_str("k").unwrap_or("server_key".to_owned());
-        let key = load_server_key(keyfile).unwrap();
+        let key =
+            load_server_key(keyfile).expect("Invalid server key, check if keyfile is correct");
         let pubkey = base64::encode(X25519::pubkey(&key));
         let tofu_file = matches
             .opt_str("allowed_list")
@@ -112,7 +108,9 @@ fn start(matches: getopts::Matches) {
             println!("Launching relay client");
             let connect_url = format!(
                 "where://{}/#{}",
-                relay_server_uri.authority().unwrap(),
+                relay_server_uri
+                    .authority()
+                    .expect("Missing authority (host) in relay server uri"),
                 pubkey
             );
             qr2term::print_qr(&connect_url).unwrap();
@@ -205,7 +203,9 @@ async fn relay(addr: SocketAddr) {
                 let discover = discover.clone();
                 move |ws: warp::ws::Ws, tail| {
                     let discover = discover.clone();
-                    ws.on_upgrade(move |websocket| discover_client(websocket, tail, discover))
+                    ws.on_upgrade(move |websocket| async {
+                        discover_client(websocket, tail, discover).await;
+                    })
                 }
             }))
         .or(warp::path("open")
@@ -216,9 +216,11 @@ async fn relay(addr: SocketAddr) {
                 let registry = registry.clone();
                 async move {
                     if let Some(key) = wherever_crypto::get_destination(&body) {
+                        println!("KEY: {:?}", base64::encode(key));
                         if let Some(channel) = registry.read().await.get(&key) {
-                            channel.send(Message(body.to_vec())).await.ok().unwrap();
-                            return Ok::<_, warp::Rejection>("Good");
+                            if let Ok(()) = channel.send(Message(body.to_vec())).await {
+                                return Ok::<_, warp::Rejection>("Good");
+                            }
                         }
                     }
                     Err(warp::reject::not_found())
@@ -339,31 +341,33 @@ async fn discover_client(
     mut ws: WebSocket,
     tail: warp::path::Tail,
     state: Arc<RwLock<DiscoveryTable>>,
-) {
+) -> Option<()> {
     match tail.as_str() {
         "" => {
             // Handle initiator
             let (sender, receiver) = oneshot::channel();
-            let msg = ws.next().await.unwrap().unwrap().into_bytes(); // -> e
-            let idx = state.write().await.reserve((msg, sender)).unwrap();
+            let msg = ws.next().await?.ok()?.into_bytes(); // -> e
+            let idx = state.write().await.reserve((msg, sender))?;
             ws.send(warp::ws::Message::text(format!("{}", idx.0))) // (<- idx)
                 .await
-                .unwrap();
-            let (reply, sender) = receiver.await.unwrap();
-            ws.send(warp::ws::Message::binary(reply)).await.unwrap(); // <- e, ee, s, es
-            let msg = ws.next().await.unwrap().unwrap().into_bytes(); // -> s, se
-            sender.send(msg).unwrap();
+                .ok()?;
+            let (reply, sender) = receiver.await.ok()?;
+            ws.send(warp::ws::Message::binary(reply)).await.ok()?; // <- e, ee, s, es
+            let msg = ws.next().await?.ok()?.into_bytes(); // -> s, se
+            sender.send(msg).ok()?;
+            Some(())
         }
         tail => {
             // Handle responder
-            let idx = TableIdx(tail.parse().unwrap());
-            let (msg, sender) = state.write().await.lookup(idx).unwrap();
-            ws.send(warp::ws::Message::binary(msg)).await.unwrap(); // -> e
+            let idx = TableIdx(tail.parse().ok()?);
+            let (msg, sender) = state.write().await.lookup(idx)?;
+            ws.send(warp::ws::Message::binary(msg)).await.ok()?; // -> e
             let (sender2, receiver2) = oneshot::channel();
-            let reply = ws.next().await.unwrap().unwrap().into_bytes(); // <- e, ee, s, es
-            sender.send((reply, sender2)).unwrap();
-            let msg = receiver2.await.unwrap();
-            ws.send(warp::ws::Message::binary(msg)).await.unwrap(); // -> s, se
+            let reply = ws.next().await?.ok()?.into_bytes(); // <- e, ee, s, es
+            sender.send((reply, sender2)).ok()?;
+            let msg = receiver2.await.ok()?;
+            ws.send(warp::ws::Message::binary(msg)).await.ok()?; // -> s, se
+            Some(())
         }
     }
 }
@@ -395,11 +399,11 @@ async fn relay_client<S: Send + Sync>(
     addr: Uri,
     tofu: Arc<RwLock<Tofu<S>>>,
     channel: mpsc::Sender<(oneshot::Sender<Option<String>>, UntrustedEntry)>,
-) {
+) -> Option<()> {
     let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{}/stream", addr))
         .await
-        .unwrap();
-    let mut stream = wherever::relay_reciever(socket, key.clone()).await.unwrap();
+        .ok()?;
+    let mut stream = wherever::relay_reciever(socket, key.clone()).await?;
     while let Some(msg) = stream.next().await {
         if let Some(msg) = match tofu.read().await.decrypt_message(&key, &msg) {
             Ok(TofuEntry::Untrusted(entry)) => {
@@ -411,6 +415,7 @@ async fn relay_client<S: Send + Sync>(
             launch(msg.to_owned());
         }
     }
+    Some(())
 }
 
 fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
@@ -447,7 +452,7 @@ fn prompt_user<S: Send + Sync + TofuStorage>(
         if let Some(entry) = {
             match entry.check(&mut rt.block_on(tofu.write())) {
                 Ok(res) => {
-                    reply.send(res).unwrap();
+                    reply.send(res).map_err(|_| io::ErrorKind::BrokenPipe)?;
                     continue;
                 }
                 Err(entry) => loop {
@@ -473,12 +478,14 @@ fn prompt_user<S: Send + Sync + TofuStorage>(
             let mut tofu = rt.block_on(tofu.write());
             if let Some(message) = entry.trust(&mut tofu) {
                 tofu.save()?;
-                reply.send(Some(message));
+                reply
+                    .send(Some(message))
+                    .map_err(|_| io::ErrorKind::BrokenPipe)?;
             } else {
-                reply.send(None).unwrap();
+                reply.send(None).map_err(|_| io::ErrorKind::BrokenPipe)?;
             }
         } else {
-            reply.send(None).unwrap();
+            reply.send(None).map_err(|_| io::ErrorKind::BrokenPipe)?;
         }
     }
     Ok(())

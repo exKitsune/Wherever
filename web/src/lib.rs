@@ -1,26 +1,22 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::HashMap;
 use std::convert::TryInto;
-use std::future::Future;
 use std::rc::Rc;
 
-use futures::lock::Mutex;
-use futures::pin_mut;
-use futures::stream::{Stream, StreamExt};
-use futures::FutureExt;
+use futures::stream::StreamExt;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-use web_sys::{Document, Storage, Window};
+use web_sys::{Document, Window};
 
-use websocket_wasm::{Message, WebSocket};
+use websocket_wasm::WebSocket;
 
 use wherever::{
     initiate_discovery, relay_reciever, respond_discovery, Tofu, TofuEntry, TofuStorage,
     UntrustedEntry,
 };
-use wherever_crypto::{relay_client_handshake, DiscoveryProtocol, Key, Pubkey};
+use wherever_crypto::{Key, Pubkey};
 
 use wherever_crypto::noise_protocol::{U8Array, DH};
 use wherever_crypto::noise_rust_crypto::X25519;
@@ -37,6 +33,7 @@ macro_rules! console_log {
 
 #[wasm_bindgen(start)]
 pub fn start() {
+    console_error_panic_hook::set_once();
     wasm_bindgen_futures::spawn_local(main())
 }
 
@@ -52,9 +49,8 @@ async fn main() {
         key.clone(),
     )
     .await;
-    receiver(window, document, storage, key.clone()).await
-}
-async fn receiver(window: Window, document: Document, storage: web_sys::Storage, key: Key) {
+    setup_settings(window.clone(), document.clone(), storage.clone()).await;
+
     let mut tofu = Tofu::load(LocalStorage(storage, "tofu".into()));
     let tofu_list = Rc::new(TofuList::new(&document, "tofu_list", "tofu_list_template"));
     let accepted = Rc::new(RefCell::new(Vec::<UntrustedEntry>::new()));
@@ -62,10 +58,41 @@ async fn receiver(window: Window, document: Document, storage: web_sys::Storage,
 
     let qr = qr_code();
     let qr_element = document.get_element_by_id("qrcode").unwrap();
-    let mut qr_html = qr_element.outer_html();
+    let mut qr_html = qr_element.inner_html();
     qr_html.push_str(&qr);
-    qr_element.set_outer_html(&qr_html);
+    qr_element.set_inner_html(&qr_html);
 
+    for delay in (0..20).chain(std::iter::repeat(20)).map(|i| 1 << i) {
+        // This might leak memory from repeatedly registering event handlers each loop
+        if let None = receiver(
+            window.clone(),
+            document.clone(),
+            key.clone(),
+            &mut tofu,
+            tofu_list.clone(),
+            accepted.clone(),
+            discovered.clone(),
+        )
+        .await
+        {
+            console_log!("ERROR ENCOUNTERED");
+            break;
+            // TODO: display error message, possibly reload page
+        }
+
+        console_log!("AAAAAA WE FINISHED: {}", delay);
+    }
+}
+
+async fn receiver(
+    window: Window,
+    document: Document,
+    key: Key,
+    mut tofu: &mut Tofu<LocalStorage>,
+    tofu_list: Rc<TofuList>,
+    accepted: Rc<RefCell<Vec<UntrustedEntry>>>,
+    discovered: Rc<RefCell<Vec<Pubkey>>>,
+) -> Option<()> {
     let location = window.location();
     let protocol = match &*location.protocol().unwrap() {
         "http:" => "ws://",
@@ -73,42 +100,36 @@ async fn receiver(window: Window, document: Document, storage: web_sys::Storage,
     };
     let host = location.host().unwrap();
     let discover_url = format!("{}{}/discover", protocol, host);
-    let discover_button: web_sys::HtmlElement = document
-        .get_element_by_id("discover")
-        .unwrap()
-        .dyn_into()
-        .unwrap();
-    {
-        let discover_url = discover_url.clone();
+    add_onclick(&document, "discover", {
         let document = document.clone();
+        let key = key.clone();
         let discovered = discovered.clone();
-        let k2 = key.clone();
-        let a = Box::new(move |_e: JsValue| {
-            let k3 = k2.clone();
+        move |_e| {
+            let key = key.clone();
             let url = discover_url.clone();
             let document = document.clone();
             let discovered = discovered.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                if let Some((phrase, f)) = initiate_discovery::<WebSocket, _>(k3, url).await {
+                if let Some((phrase, f)) = initiate_discovery::<WebSocket, _>(key, url).await {
                     let discover_text: web_sys::HtmlElement = document
                         .get_element_by_id("discover_phrase")
                         .unwrap()
                         .dyn_into()
                         .unwrap();
                     discover_text.set_inner_html(&phrase);
-                    let key = f.await.unwrap();
-                    discover_text.set_inner_html(&"");
-                    discovered.borrow_mut().push(key);
+                    if let Some(key) = f.await {
+                        discover_text.set_inner_html(&"");
+                        discovered.borrow_mut().push(key);
+                    }
                 }
             });
-        }) as Box<dyn FnMut(_)>;
-        discover_button.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
-    }
+        }
+    });
 
     let socket = WebSocket::new(&format!("{}{}/stream", protocol, host))
         .await
-        .unwrap();
-    let mut stream = relay_reciever(socket, key.clone()).await.unwrap();
+        .ok()?;
+    let mut stream = relay_reciever(socket, key.clone()).await?;
 
     while let Some(msg) = stream.next().await {
         for e in accepted.borrow_mut().drain(..) {
@@ -165,6 +186,7 @@ async fn receiver(window: Window, document: Document, storage: web_sys::Storage,
                 .unwrap();
         }
     }
+    Some(())
 }
 
 struct TofuList {
@@ -229,7 +251,7 @@ impl TofuList {
             // todo
         }
         template.set_id(&base64::encode(entry.key));
-        self.list_div.append_child(&template);
+        self.list_div.append_child(&template).unwrap();
     }
     fn remove(&self, entry: &UntrustedEntry) {
         let children = self.list_div.child_nodes();
@@ -240,7 +262,7 @@ impl TofuList {
             .filter(|elem| elem.id().as_str() == &key)
             .collect();
         for elem in elems {
-            self.list_div.remove_child(&elem);
+            self.list_div.remove_child(&elem).unwrap();
         }
     }
 }
@@ -275,7 +297,8 @@ impl TofuStorage for LocalStorage {
 fn load_key(storage: &web_sys::Storage) -> Key {
     if let Some(key) = storage
         .get_item("key")
-        .unwrap()
+        .ok()
+        .flatten()
         .and_then(|key| base64::decode(key).ok())
         .map(|k| Key::from_slice(&*k))
     {
@@ -283,9 +306,16 @@ fn load_key(storage: &web_sys::Storage) -> Key {
     } else {
         console_log!("MAKING NEW KEY");
         let key = X25519::genkey();
-        storage.set_item("key", &base64::encode(&*key));
+        storage.set_item("key", &base64::encode(&*key)).unwrap();
         key
     }
+}
+
+fn clear_key(storage: &web_sys::Storage) {
+    storage.remove_item("key").unwrap();
+}
+fn clear_tofu(storage: &web_sys::Storage) {
+    storage.remove_item("tofu").unwrap();
 }
 
 pub fn qr_code() -> String {
@@ -297,8 +327,8 @@ pub fn qr_code() -> String {
     let string = code
         .render()
         .min_dimensions(300, 300)
-        .dark_color(svg::Color("#000000"))
-        .light_color(svg::Color("#FFFFFF"))
+        .dark_color(svg::Color("#000000FF"))
+        .light_color(svg::Color("#FFFFFF00"))
         .build();
     string
 }
@@ -329,20 +359,15 @@ async fn setup_sender(window: Window, document: Document, storage: web_sys::Stor
     }
     let send_target = Rc::new(Cell::new(target));
 
-    {
-        let discover_button: web_sys::HtmlElement = document
-            .get_element_by_id("discover_respond")
-            .unwrap()
-            .dyn_into()
-            .unwrap();
+    add_onclick(&document, "discover_respond", {
         let document = document.clone();
-        let storage = storage.clone();
-        let k2 = key.clone();
         let send_target = send_target.clone();
+        let key = key.clone();
         let target_input = target_input.clone();
-        let a = Box::new(move |_e: JsValue| {
+        let storage = storage.clone();
+        move |_e| {
             let send_target = send_target.clone();
-            let k3 = k2.clone();
+            let key = key.clone();
             let target_input = target_input.clone();
             let url = discover_url.clone();
             let document = document.clone();
@@ -358,7 +383,7 @@ async fn setup_sender(window: Window, document: Document, storage: web_sys::Stor
                 if let Some((channel, phrase)) = wherever::parse_phrase(&phrase) {
                     console_log!("phraseeee {}", &phrase);
                     if let Some(key) = respond_discovery::<WebSocket, _>(
-                        k3,
+                        key,
                         format!("{}/{}", url, channel),
                         phrase,
                     )
@@ -369,19 +394,11 @@ async fn setup_sender(window: Window, document: Document, storage: web_sys::Stor
                     }
                 }
             });
-        }) as Box<dyn FnMut(_)>;
-        discover_button.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
-    }
-    {
-        let update_target: web_sys::HtmlElement = document
-            .get_element_by_id("send_update")
-            .unwrap()
-            .dyn_into()
-            .unwrap();
-        let target_input = target_input.clone();
-        let storage = storage.clone();
+        }
+    });
+    add_onclick(&document, "send_update", {
         let send_target = send_target.clone();
-        let a = Box::new(move |_e: JsValue| {
+        move |_e| {
             let send_target = send_target.clone();
             let target_input = target_input.clone();
             let storage = storage.clone();
@@ -393,22 +410,14 @@ async fn setup_sender(window: Window, document: Document, storage: web_sys::Stor
                     set_target(&storage, &send_target, key);
                 }
             });
-        }) as Box<dyn FnMut(_)>;
-        update_target.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
-    }
-    {
-        let send_button: web_sys::HtmlElement = document
-            .get_element_by_id("send")
-            .unwrap()
-            .dyn_into()
-            .unwrap();
+        }
+    });
+    add_onclick(&document, "send", {
         let document = document.clone();
-        let k2 = key.clone();
-        let a = Box::new(move |_e: JsValue| {
+        move |_e| {
             let send_target = send_target.clone();
-            let k3 = k2.clone();
-            let document = document.clone();
             let window = window.clone();
+            let key = key.clone();
             let link: web_sys::HtmlInputElement = document
                 .get_element_by_id("send_input")
                 .unwrap()
@@ -416,12 +425,42 @@ async fn setup_sender(window: Window, document: Document, storage: web_sys::Stor
                 .unwrap();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Some(server_key) = send_target.get() {
-                    send_link(&window, &link.value(), &k3, &server_key).await;
+                    send_link(&window, &link.value(), &key, &server_key).await;
                 }
             });
-        }) as Box<dyn FnMut(_)>;
-        send_button.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
-    }
+        }
+    });
+}
+
+async fn setup_settings(window: Window, document: Document, storage: web_sys::Storage) {
+    let location = window.location();
+    add_onclick(&document, "reset_key", {
+        let storage = storage.clone();
+        let location = location.clone();
+        move |_e| {
+            let storage = storage.clone();
+            clear_key(&storage);
+            location.reload().unwrap();
+        }
+    });
+    add_onclick(&document, "reset_tofu", {
+        move |_e| {
+            let storage = storage.clone();
+            clear_tofu(&storage);
+            location.reload().unwrap();
+        }
+    });
+}
+
+fn add_onclick<F: FnMut(JsValue) + 'static>(document: &web_sys::Document, element_id: &str, f: F) {
+    let element: web_sys::HtmlElement = document
+        .get_element_by_id(element_id)
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+
+    let a = Box::new(f) as Box<dyn FnMut(_)>;
+    element.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
 }
 
 fn set_target(
@@ -435,7 +474,12 @@ fn set_target(
     send_target.set(Some(new_target));
 }
 
-async fn send_link(window: &web_sys::Window, link: &str, client_key: &Key, server_key: &Pubkey) {
+async fn send_link(
+    window: &web_sys::Window,
+    link: &str,
+    client_key: &Key,
+    server_key: &Pubkey,
+) -> Option<()> {
     let storage = window.local_storage().unwrap().unwrap();
     let seq = storage
         .get_item("seq")
@@ -445,7 +489,7 @@ async fn send_link(window: &web_sys::Window, link: &str, client_key: &Key, serve
         .unwrap_or(0);
     let body =
         wherever_crypto::encrypt_client_message(link, client_key.clone(), server_key.clone(), seq)
-            .unwrap();
+            .ok()?;
     storage.set_item("seq", &format!("{}", seq + 1)).unwrap();
     wasm_bindgen_futures::JsFuture::from(
         window.fetch_with_str_and_init(
@@ -456,5 +500,6 @@ async fn send_link(window: &web_sys::Window, link: &str, client_key: &Key, serve
         ),
     )
     .await
-    .unwrap();
+    .ok()
+    .map(|_| ())
 }

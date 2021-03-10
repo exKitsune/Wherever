@@ -1,11 +1,12 @@
 use std::env;
+use std::io;
 use std::path::Path;
 use std::process::{exit, Command};
 
-fn main() {
+fn main() -> io::Result<()> {
     let out_dir = Path::new(&env::var_os("OUT_DIR").unwrap()).join("web");
     std::fs::copy("../web/index.html", out_dir.join("index.html")).unwrap();
-    Command::new("wasm-pack")
+    let exit_code = Command::new("wasm-pack")
         .arg("build")
         .arg("--release")
         .arg("--target")
@@ -13,8 +14,8 @@ fn main() {
         .arg("--out-dir")
         .arg(&out_dir)
         .current_dir("../web/")
-        .status()
-        .unwrap();
+        .status()?;
+    exit(exit_code.code().unwrap_or(1))
     //println!(
     //    "cargo:rerun-if-changed={}",
     //    std::env::current_dir()

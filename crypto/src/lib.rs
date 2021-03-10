@@ -61,7 +61,8 @@ pub fn decrypt_client_message(
     let mut ret = handshake.read_message_vec(msg).map_err(|e| e.kind())?;
     let seq = NetworkEndian::read_u64(&ret);
     let ret = ret.split_off(8);
-    let client_key = handshake.get_rs().unwrap();
+    let client_key = handshake.get_rs().ok_or(noise_protocol::ErrorKind::DH)?;
+    // this is probably the wrong error but whatever
     Ok((client_key, seq, ret))
 }
 
