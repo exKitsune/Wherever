@@ -56,7 +56,7 @@ async fn main() {
     let accepted = Rc::new(RefCell::new(Vec::<UntrustedEntry>::new()));
     let discovered = Rc::new(RefCell::new(Vec::<Pubkey>::new()));
 
-    let qr = qr_code();
+    let qr = qr_code(&key, window.location());
     let qr_element = document.get_element_by_id("qrcode").unwrap();
     let mut qr_html = qr_element.inner_html();
     qr_html.push_str(&qr);
@@ -318,12 +318,21 @@ fn clear_tofu(storage: &web_sys::Storage) {
     storage.remove_item("tofu").unwrap();
 }
 
-pub fn qr_code() -> String {
-    let storage = web_sys::window().unwrap().local_storage().unwrap().unwrap();
-    let key = load_key(&storage);
-    let pubkey = X25519::pubkey(&key);
+pub fn qr_code(key: &Key, location: web_sys::Location) -> String {
     use qrcode::{render::svg, QrCode};
-    let code = QrCode::new(format!("where://10.9.0.3:3543/#{}", base64::encode(pubkey))).unwrap();
+    let pubkey = X25519::pubkey(key);
+    let protocol = match &*location.protocol().unwrap() {
+        "http:" => "where",
+        _ => "wheres",
+    };
+    let host = location.host().unwrap();
+    let code = QrCode::new(format!(
+        "{}://{}/#{}",
+        protocol,
+        host,
+        base64::encode(pubkey)
+    ))
+    .unwrap();
     let string = code
         .render()
         .min_dimensions(300, 300)
@@ -486,7 +495,7 @@ async fn send_link(
         .ok()
         .flatten()
         .and_then(|x| x.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or(1);
     let body =
         wherever_crypto::encrypt_client_message(link, client_key.clone(), server_key.clone(), seq)
             .ok()?;
