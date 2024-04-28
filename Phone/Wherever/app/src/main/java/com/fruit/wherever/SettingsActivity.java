@@ -36,7 +36,6 @@ import java.util.List;
 
 
 public class SettingsActivity extends AppCompatActivity {
-    private DBManager dbManager = new DBManager(this);
 
     final String[] from = new String[] { DatabaseHelper.HOST, DatabaseHelper.COMPONENT };
     final int[] to = new int[] { R.id.hostTextView, R.id.compTextView };
@@ -78,8 +77,7 @@ public class SettingsActivity extends AppCompatActivity {
         //last accessed time in db is important here, we sort the entries in the db by last accessed
         // this makes it easier to remove entries in case you misclick
         listView = (ListView) findViewById(R.id.listView);
-        dbManager.open();
-        Cursor cursor = dbManager.fetchAll();
+        Cursor cursor = DBManager.getInstance(getApplicationContext()).fetchAll();
         adapter = new SimpleCursorAdapter(this, R.layout.listview_row, cursor, from, to, 0);
         adapter.notifyDataSetChanged();
 
@@ -97,7 +95,7 @@ public class SettingsActivity extends AppCompatActivity {
                 startActivity(modifyIntent);
             }
         });
-        dbManager.close();
+
         textView = (TextView) findViewById(R.id.conn_info);
 
         textView.setText("Current Server: " + prefs.getString("ip", "127.0.0.1") + ":" + prefs.getInt("port", 8998));
@@ -148,9 +146,7 @@ public class SettingsActivity extends AppCompatActivity {
                     pbList.add(c.getComponent().flattenToString());
                 }
                 potential_browsers = String.join(",", pbList);
-                dbManager.open();
-                dbManager.put("POTENTIAL_BROWSERS", potential_browsers, 0);
-                dbManager.close();
+                DBManager.getInstance(getApplicationContext()).put("POTENTIAL_BROWSERS", potential_browsers, 0);
                 startActivity(cci.first);
             }
         }));
@@ -167,9 +163,7 @@ public class SettingsActivity extends AppCompatActivity {
                         .setNegativeButton(android.R.string.yes, new DialogInterface.OnClickListener() {
 
                             public void onClick(DialogInterface dialog, int whichButton) {
-                                dbManager.open();
-                                dbManager.drop();
-                                dbManager.close();
+                                DBManager.getInstance(getApplicationContext()).drop();
 
                                 SettingsActivity.this.recreate();
                                 Toast.makeText(SettingsActivity.this, "Reset Preferences", Toast.LENGTH_SHORT).show();

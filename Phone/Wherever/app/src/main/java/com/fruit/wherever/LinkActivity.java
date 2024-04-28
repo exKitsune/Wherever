@@ -35,7 +35,6 @@ import static com.fruit.wherever.SettingsActivity.ACTION_APP_OPEN;
 import static com.fruit.wherever.SettingsActivity.ACTION_DEFAULT_SET;
 
 public class LinkActivity extends AppCompatActivity {
-    private DBManager dbManager = new DBManager(this);
 
     @RequiresApi(api = Build.VERSION_CODES.O)
     @Override
@@ -60,10 +59,8 @@ public class LinkActivity extends AppCompatActivity {
             if(!chosen_app.flattenToString().equals("com.fruit.wherever/com.fruit.wherever.LinkActivity")) {
                 Uri uri = Uri.parse(url);
                 String host = uri.getHost();
-                dbManager.open();
                 Long currentTime = Calendar.getInstance().getTimeInMillis();
-                dbManager.put(host, chosen_app.flattenToString(), currentTime);
-                dbManager.close();
+                DBManager.getInstance(getApplicationContext()).put(host, chosen_app.flattenToString(), currentTime);
             }
         }
         //callback when choosing a default browser
@@ -72,9 +69,7 @@ public class LinkActivity extends AppCompatActivity {
             ComponentName chosen_app = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
             Log.e("New def app", chosen_app.flattenToString());
             if(!chosen_app.flattenToString().equals("com.fruit.wherever/com.fruit.wherever.LinkActivity")) {
-                dbManager.open();
-                dbManager.put("DEFAULT_BROWSER", chosen_app.flattenToString(), 0);
-                dbManager.close();
+                DBManager.getInstance(getApplicationContext()).put("DEFAULT_BROWSER", chosen_app.flattenToString(), 0);
             }
         }
 
@@ -186,10 +181,9 @@ public class LinkActivity extends AppCompatActivity {
                 } else {
                     if (intent.getAction() != Intent.ACTION_SEND) {
                         //super.onBackPressed();
-                        dbManager.open();
                         String host = Uri.parse(intent.getData().toString()).getHost();
                         String component = null;
-                        Cursor cursor = dbManager.fetch(host);
+                        Cursor cursor = DBManager.getInstance(getApplicationContext()).fetch(host);
                         while (cursor.moveToNext()) {
                             component = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT));
                         }
@@ -225,7 +219,7 @@ public class LinkActivity extends AppCompatActivity {
                             ComponentName default_browser_full = null;
                             String potential_browsers = null;
 
-                            cursor = dbManager.fetch("DEFAULT_BROWSER");
+                            cursor = DBManager.getInstance(getApplicationContext()).fetch("DEFAULT_BROWSER");
 
                             while (cursor.moveToNext()) {
                                 default_browser_full = ComponentName.unflattenFromString(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT)));
@@ -236,7 +230,7 @@ public class LinkActivity extends AppCompatActivity {
                                 sendIntent.setComponent(default_browser_full);
                                 startActivity(sendIntent);
                             } else {
-                                cursor = dbManager.fetch("POTENTIAL_BROWSERS");
+                                cursor = DBManager.getInstance(getApplicationContext()).fetch("POTENTIAL_BROWSERS");
                                 while (cursor.moveToNext()) {
                                     potential_browsers = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT));
                                 }
@@ -274,10 +268,9 @@ public class LinkActivity extends AppCompatActivity {
                             finalIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
                             finalIntent.setComponent(ComponentName.unflattenFromString(component));
                             Long currentTime = Calendar.getInstance().getTimeInMillis();
-                            dbManager.put(host, component, currentTime);
+                            DBManager.getInstance(getApplicationContext()).put(host, component, currentTime);
                             startActivity(finalIntent);
                         }
-                        dbManager.close();
                     }
                 }
             }
