@@ -222,24 +222,19 @@ public class SettingsActivity extends AppCompatActivity {
                             //send toast in main thread to notify user of success
                             // or failure, in which case turn app off
                             final boolean f_good = good;
-                            Thread thread = new Thread() {
+                            runOnUiThread(new Runnable() {
                                 public void run() {
-                                    runOnUiThread(new Runnable() {
-                                        public void run() {
-                                            if(!f_good) {
-                                                Toast.makeText(getApplicationContext(), "Wherever Server Connection Unstable\nTurning OFF", Toast.LENGTH_LONG).show();
+                                    if(!f_good) {
+                                        Toast.makeText(getApplicationContext(), "Wherever Server Connection Unstable\nTurning OFF", Toast.LENGTH_LONG).show();
 
-                                                SharedPreferences.Editor editor = prefs.edit();
-                                                editor.putBoolean("enabled", false);
-                                                editor.apply();
-                                            } else {
-                                                Toast.makeText(getApplicationContext(), "Link Sent", Toast.LENGTH_SHORT).show();
-                                            }
-                                        }
-                                    });
+                                        SharedPreferences.Editor editor = prefs.edit();
+                                        editor.putBoolean("enabled", false);
+                                        editor.apply();
+                                    } else {
+                                        Toast.makeText(getApplicationContext(), "Link Sent", Toast.LENGTH_SHORT).show();
+                                    }
                                 }
-                            };
-                            thread.start();
+                            });
                         }
                     };
                     new Thread(r).start();
