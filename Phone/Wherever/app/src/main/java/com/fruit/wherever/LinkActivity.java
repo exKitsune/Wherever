@@ -45,6 +45,7 @@ public class LinkActivity extends AppCompatActivity {
 
         Intent intent = getIntent();
         SharedPreferences prefs = SettingsActivity.getSharedPreferences(this.getApplicationContext());
+        SharedPreferences.Editor editor = prefs.edit();
 
         if(intent.getAction().equals(ACTION_APP_OPEN)) {
             Log.e("BRUH", "ACTION_APP_OPEN CALLBACK");
@@ -97,7 +98,6 @@ public class LinkActivity extends AppCompatActivity {
                 int home_port = uri.getPort();
                 String server_pub_key_b64 = uri.getFragment();
 
-                SharedPreferences.Editor editor = prefs.edit();
                 editor.putString("ip", home_ip);
                 editor.putInt("port", home_port);
                 editor.putString("server_pub_key", server_pub_key_b64);
@@ -105,11 +105,12 @@ public class LinkActivity extends AppCompatActivity {
                     byte[] generated_key = WhereverCrypto.genKey();
                     String generated_key_b64 = Base64.getEncoder().encodeToString(generated_key);
                     editor.putString("client_key", generated_key_b64);
+                    editor.putLong("seq", 0);
                 }
                 editor.apply();
             } else { //if(uri.getScheme() == "http" || uri.getScheme() == "https") {
                 if (prefs.getBoolean("enabled", false)) {
-                    String home_ip = prefs.getString("ip", "192.168.1.11");
+                    String home_ip = prefs.getString("ip", "127.0.0.1");
                     int home_port = prefs.getInt("port", 8998);
 
                     if (home_ip == "") {
@@ -121,7 +122,6 @@ public class LinkActivity extends AppCompatActivity {
                     if(server_pub_key_b64.equals("null")) {
                         Toast.makeText(getApplicationContext(), "Wherever Server Public Key Error\nTurning OFF", Toast.LENGTH_LONG).show();
 
-                        SharedPreferences.Editor editor = prefs.edit();
                         editor.putBoolean("enabled", false);
                         editor.apply();
                         finish();
@@ -130,7 +130,12 @@ public class LinkActivity extends AppCompatActivity {
                     byte[] server_pub_key = Base64.getDecoder().decode(server_pub_key_b64);
                     String client_key_b64 = prefs.getString("client_key", "null");
                     byte[] client_key = Base64.getDecoder().decode(client_key_b64);
-                    byte[] encrypted_msg = WhereverCrypto.encMsg(uri.toString(), client_key, server_pub_key);
+
+                    final long seq_number = prefs.getLong("seq", 0);
+                    editor.putLong("seq", seq_number + 1);
+                    editor.apply();
+
+                    byte[] encrypted_msg = WhereverCrypto.encMsg(uri.toString(), client_key, server_pub_key, seq_number);
 
                     final byte[] input = encrypted_msg;
 
@@ -168,7 +173,6 @@ public class LinkActivity extends AppCompatActivity {
                                     if(!f_good) {
                                         Toast.makeText(getApplicationContext(), "Wherever Server Connection Unstable\nTurning OFF", Toast.LENGTH_LONG).show();
 
-                                        SharedPreferences.Editor editor = prefs.edit();
                                         editor.putBoolean("enabled", false);
                                         editor.apply();
                                     } else {
