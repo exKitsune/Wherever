@@ -14,8 +14,9 @@ reqwest = { version = "0.11.0", optional = true, features = ["blocking", "json"]
 warp = { version = "0.3", features = ["websocket"] }
 tokio = { version = "1.1", features = ["sync", "rt", "macros", "rt-multi-thread"] }
 futures = { version = "0.3" }
-tungstenite = "0.12"
+tokio-tungstenite = "0.13"
 base64 = "0.13"
+getopts = "0.2"
 
 wherever_crypto = { path = "../crypto" }
 
