@@ -1,66 +1,79 @@
-<script src="pkg/wherever_web.js"></script>
-<script type="module">
-    import init, * as crypto from './pkg/wherever_web.js';
-    function read_message(ws) {
-        return new Promise((resolve, reject) => {
-            ws.onmessage = (msg) => {
-                ws.onmessage = undefined;
-                ws.onerror = undefined;
-                resolve(msg)
-            };
-            ws.onerror = (err) => {
-                ws.onmessage = undefined;
-                ws.onerror = undefined;
-                reject(err)
-            };
-        })
-    }
-    function open(url) {
-        let ws = new WebSocket(url);
-        ws.binaryType = "arraybuffer";
-        return new Promise((resolve, reject) => {
-            ws.onopen = (msg) => {
-                ws.onopen = undefined;
-                ws.onerror = undefined;
-                console.log(ws);
-                resolve(ws)
-            };
-            ws.onerror = (err) => {
-                ws.onopen = undefined;
-                ws.onerror = undefined;
-                reject(err)
-            };
-        })
-    }
-    async function run() {
-        await init();
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>
+            Wherever Receiver
+        </title>
+    </head>
+<body>
+    <p> I'm E
+    <p id="result"></p>
+    <div id="qrcode"></div>
+        <script src="wherever_web.js" type="module"></script>
+        <script type="module">
+            import init, * as crypto from './wherever_web.js';
+            function read_message(ws) {
+                return new Promise((resolve, reject) => {
+                    ws.onmessage = (msg) => {
+                        ws.onmessage = undefined;
+                        ws.onerror = undefined;
+                        resolve(msg)
+                    };
+                    ws.onerror = (err) => {
+                        ws.onmessage = undefined;
+                        ws.onerror = undefined;
+                        reject(err)
+                    };
+                })
+            }
+            function open(url) {
+                let ws = new WebSocket(url);
+                ws.binaryType = "arraybuffer";
+                return new Promise((resolve, reject) => {
+                    ws.onopen = (msg) => {
+                        ws.onopen = undefined;
+                        ws.onerror = undefined;
+                        console.log(ws);
+                        resolve(ws)
+                    };
+                    ws.onerror = (err) => {
+                        ws.onopen = undefined;
+                        ws.onerror = undefined;
+                        reject(err)
+                    };
+                })
+            }
+            async function run() {
+                await init();
 
-        let state = crypto.new_state();
+                let state = crypto.new_state();
 
-        let qr = crypto.qr_code();
-        document.getElementById('qrcode').outerHTML += qr;
+                let qr = crypto.qr_code();
+                document.getElementById('qrcode').outerHTML += qr;
 
-        let socket = await open("ws://127.0.0.1:3543/stream");
+                let protocol = "wss://";
+                if (window.location.protocol == "http:") {
+                    protocol = "ws://"
+                }
+                let socket = await open(protocol + window.location.host + "/stream");
 
-        socket.send(state.first_message());
+                socket.send(state.first_message());
 
-        let msg = await read_message(socket);
-        state.response(new Uint8Array(msg.data));
-        socket.send(state.second_message());
+                let msg = await read_message(socket);
+                state.response(new Uint8Array(msg.data));
+                socket.send(state.second_message());
 
-        let cipher = state.into_cipher()
-        console.log(msg);
-        while (true) {
-            let msg = await read_message(socket);
-            console.log(msg);
-            let decrypted = cipher.decrypt_message(new Uint8Array(msg.data));
-            console.log(decrypted);
-            window.open(decrypted, "_blank", "noreferrer,noopener");
-        }
-    }
-    run();
-</script>
-
-<p> I'm E
-<p id="result"></p>
-<div id="qrcode"></div>
+                let cipher = state.into_cipher()
+                console.log(msg);
+                while (true) {
+                    let msg = await read_message(socket);
+                    console.log(msg);
+                    let decrypted = cipher.decrypt_message(new Uint8Array(msg.data));
+                    console.log(decrypted);
+                    window.open(decrypted, "_blank", "noreferrer,noopener");
+                }
+            }
+            run();
+        </script>
+    </body>
+</html>

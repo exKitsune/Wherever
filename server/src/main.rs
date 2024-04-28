@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -9,6 +9,10 @@ use std::sync::{
     Arc,
 };
 use std::thread;
+
+use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
+use rand::{Rng, SeedableRng};
 
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::http::Uri;
@@ -183,6 +187,7 @@ type Registry = HashMap<Pubkey, mpsc::Sender<Message>>;
 
 async fn relay(addr: SocketAddr) {
     let registry = Arc::new(RwLock::new(Registry::new()));
+    let discover = Arc::new(RwLock::new(DiscoveryTable::new(100)));
     let routes = warp::path("stream")
         .and(warp::ws())
         .and(warp::filters::addr::remote())
@@ -194,6 +199,16 @@ async fn relay(addr: SocketAddr) {
                 ws.on_upgrade(move |websocket| handle_client(websocket, registry, addr))
             }
         })
+        .or(warp::path("discover")
+            .and(warp::ws())
+            .and(warp::path::tail())
+            .map({
+                let discover = discover.clone();
+                move |ws: warp::ws::Ws, tail| {
+                    let discover = discover.clone();
+                    ws.on_upgrade(move |websocket| discover_client(websocket, tail, discover))
+                }
+            }))
         .or(warp::path("open")
             .and(warp::post())
             .and(warp::body::content_length_limit(4096))
@@ -209,7 +224,8 @@ async fn relay(addr: SocketAddr) {
                     }
                     Err(warp::reject::not_found())
                 }
-            }));
+            }))
+        .or(warp::path::full().and_then(serve_web_client));
     warp::serve(routes).run(addr).await;
 }
 
@@ -269,6 +285,110 @@ async fn handle_client(
     }
     println!("Client disconnected {:?}", remote);
     let _ = ws.close().await;
+}
+
+#[derive(Eq, PartialEq, Hash, Clone)]
+struct TableIdx(u64);
+
+type DiscoveryChannel = (
+    Vec<u8>,
+    oneshot::Sender<(Vec<u8>, oneshot::Sender<Vec<u8>>)>,
+);
+
+struct DiscoveryTable {
+    map: HashMap<TableIdx, DiscoveryChannel>,
+    slots: VecDeque<TableIdx>,
+    rng: SmallRng,
+}
+
+impl DiscoveryTable {
+    fn new(capacity: u64) -> Self {
+        let mut slots: VecDeque<_> = (0..capacity).map(TableIdx).collect();
+        let mut rng = SmallRng::from_entropy();
+        // Shuffling it makes it more interesting
+        slots.make_contiguous().shuffle(&mut rng);
+        Self {
+            map: HashMap::new(),
+            slots,
+            rng,
+        }
+    }
+    fn reserve(&mut self, ch: DiscoveryChannel) -> Option<TableIdx> {
+        if let Some(idx) = self.slots.pop_back() {
+            self.map.insert(idx.clone(), ch);
+            Some(idx)
+        } else {
+            None
+        }
+    }
+    fn lookup(&mut self, idx: TableIdx) -> Option<DiscoveryChannel> {
+        if let Some(a) = self.map.remove(&idx) {
+            // incredible
+            if self.rng.gen() {
+                self.slots.push_back(idx);
+            } else {
+                self.slots.push_front(idx);
+            }
+            Some(a)
+        } else {
+            None
+        }
+    }
+}
+
+async fn discover_client(
+    mut ws: WebSocket,
+    tail: warp::path::Tail,
+    state: Arc<RwLock<DiscoveryTable>>,
+) {
+    match tail.as_str() {
+        "" => {
+            // Handle initiator
+            let (sender, receiver) = oneshot::channel();
+            let msg = ws.next().await.unwrap().unwrap().into_bytes(); // -> e
+            let idx = state.write().await.reserve((msg, sender)).unwrap();
+            ws.send(warp::ws::Message::text(format!("{}", idx.0))) // (<- idx)
+                .await
+                .unwrap();
+            let (reply, sender) = receiver.await.unwrap();
+            ws.send(warp::ws::Message::binary(reply)).await.unwrap(); // <- e, ee, s, es
+            let msg = ws.next().await.unwrap().unwrap().into_bytes(); // -> s, se
+            sender.send(msg).unwrap();
+        }
+        tail => {
+            // Handle responder
+            let idx = TableIdx(tail.parse().unwrap());
+            let (msg, sender) = state.write().await.lookup(idx).unwrap();
+            ws.send(warp::ws::Message::binary(msg)).await.unwrap(); // -> e
+            let (sender2, receiver2) = oneshot::channel();
+            let reply = ws.next().await.unwrap().unwrap().into_bytes(); // <- e, ee, s, es
+            sender.send((reply, sender2)).unwrap();
+            let msg = receiver2.await.unwrap();
+            ws.send(warp::ws::Message::binary(msg)).await.unwrap(); // -> s, se
+        }
+    }
+}
+
+async fn serve_web_client(path: warp::path::FullPath) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("ahoy {:?}", path);
+    match path.as_str() {
+        "/" | "/index.html" => Ok(warp::reply::with_header(
+            wherever_web_compiled::HTML,
+            "Content-Type",
+            "text/html; charset=UTF-8",
+        )),
+        "/wherever_web.js" => Ok(warp::reply::with_header(
+            wherever_web_compiled::JS,
+            "Content-Type",
+            "text/javascript; charset=UTF-8",
+        )),
+        "/wherever_web_bg.wasm" => Ok(warp::reply::with_header(
+            wherever_web_compiled::WASM,
+            "Content-Type",
+            "application/wasm",
+        )),
+        _ => Err(warp::reject()),
+    }
 }
 
 async fn relay_client(
