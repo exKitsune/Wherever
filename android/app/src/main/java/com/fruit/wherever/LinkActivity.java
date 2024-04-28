@@ -91,10 +91,16 @@ public class LinkActivity extends AppCompatActivity {
             Log.e("BRUH", "URI: " + uri.toString());
             Log.e("BRUH", "URI scheme: \"" + uri.getScheme() + "\"");
             Log.e("BRUH", "URI host: \"" + uri.getHost() + "\"");
-            if(uri.getScheme().equals("where")) {
+            if(uri.getScheme().equals("where") || uri.getScheme().equals("wheres")) {
                 Log.e("BRUH", "where = " + uri);
                 String home_ip = uri.getHost();
                 int home_port = uri.getPort();
+                final boolean secure;
+                if(uri.getScheme().equals("wheres")) {
+                    secure = true;
+                } else {
+                    secure = false;
+                }
                 String server_pub_key_b64 = uri.getFragment();
 
                 new AlertDialog.Builder(LinkActivity.this)
@@ -108,6 +114,7 @@ public class LinkActivity extends AppCompatActivity {
                         })
                         .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog, int whichButton) {
+                                editor.putBoolean("secure", secure);
                                 editor.putString("ip", home_ip);
                                 editor.putInt("port", home_port);
                                 editor.putString("server_pub_key", server_pub_key_b64);
@@ -126,6 +133,7 @@ public class LinkActivity extends AppCompatActivity {
 
             } else { //if(uri.getScheme() == "http" || uri.getScheme() == "https") {
                 if (prefs.getBoolean("enabled", false)) {
+                    boolean secure = prefs.getBoolean("secure", true);
                     String home_ip = prefs.getString("ip", "127.0.0.1");
                     int home_port = prefs.getInt("port", 8998);
 
@@ -162,7 +170,8 @@ public class LinkActivity extends AppCompatActivity {
                             boolean good = true;
                             try {
                                 Log.e("BRUH", "I'm gonna send the response");
-                                URL url = new URL("http://" + home_ip + ":" + home_port + "/open");
+                                String scheme = secure ? "https://" : "http://";
+                                URL url = new URL(scheme + home_ip + ":" + home_port + "/open");
                                 HttpURLConnection con = (HttpURLConnection) url.openConnection();
                                 con.setDoOutput(true);
                                 con.setRequestMethod("POST");
