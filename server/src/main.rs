@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -12,10 +13,8 @@ use warp::Filter;
 use futures::{select, FutureExt, SinkExt, StreamExt};
 use tokio::sync::{mpsc, RwLock};
 
-use noise_protocol::{U8Array, DH};
-use noise_rust_crypto::X25519;
-
-use server::{Key, Pubkey};
+use wherever_crypto::{Key, Pubkey};
+use wherever_crypto::{U8Array, DH, X25519};
 
 #[tokio::main]
 async fn main() {
@@ -58,6 +57,7 @@ async fn main() {
 async fn standalone(addr: SocketAddr) {
     let key = KeyWrapper(load_server_key("server_key").unwrap());
     let pubkey = base64::encode(X25519::pubkey(&key.0));
+    let tofu = Arc::new(RwLock::new(Tofu::load("allowed_devices.txt").unwrap()));
     qr2term::print_qr(format!("where://{}/#{}", addr, pubkey)).unwrap();
     println!("where://{}/#{}", addr, pubkey);
     warp::serve(
@@ -67,10 +67,16 @@ async fn standalone(addr: SocketAddr) {
             .and(warp::body::bytes())
             .and_then(move |body: warp::hyper::body::Bytes| {
                 let key = key.0.clone();
+                let tofu = tofu.clone();
                 async move {
-                    if let Ok(msg) = server::decrypt_client_message(&*body, key) {
-                        let url = std::str::from_utf8(&msg).map_err(|_| warp::reject::reject())?;
-                        launch(url.to_owned());
+                    if let Ok((client_key, msg)) =
+                        wherever_crypto::decrypt_client_message(&*body, key)
+                    {
+                        if prompt_async(&tofu, &client_key).await.unwrap_or(false) {
+                            let url =
+                                std::str::from_utf8(&msg).map_err(|_| warp::reject::reject())?;
+                            launch(url.to_owned());
+                        }
                     }
                     Ok::<_, warp::Rejection>("Good")
                 }
@@ -108,7 +114,7 @@ async fn relay(addr: SocketAddr) {
             .and_then(move |body: warp::hyper::body::Bytes| {
                 let registry = registry.clone();
                 async move {
-                    if let Some(key) = server::get_destination(&body) {
+                    if let Some(key) = wherever_crypto::get_destination(&body) {
                         if let Some(channel) = registry.read().await.get(&key) {
                             channel.send(Message(body.to_vec())).await.ok().unwrap();
                         }
@@ -167,6 +173,7 @@ async fn handle_client(
 
 fn relay_client(addr: SocketAddr) {
     let key = KeyWrapper(load_server_key("server_key").unwrap());
+    let mut tofu = Tofu::load("allowed_devices.txt").unwrap();
     let pubkey = X25519::pubkey(&key.0);
     let pubkey_string = base64::encode(&pubkey);
     qr2term::print_qr(format!("where://{}/#{}", addr, pubkey_string)).unwrap();
@@ -177,9 +184,13 @@ fn relay_client(addr: SocketAddr) {
         .write_message(tungstenite::Message::Binary((&pubkey).to_vec()))
         .unwrap();
     while let Ok(msg) = socket.read_message() {
-        if let Ok(msg) = server::decrypt_client_message(&msg.into_data(), key.clone().0) {
-            if let Some(url) = std::str::from_utf8(&msg).ok() {
-                launch(url.to_owned());
+        if let Ok((client_key, msg)) =
+            wherever_crypto::decrypt_client_message(&msg.into_data(), key.clone().0)
+        {
+            if prompt(&mut tofu, &client_key).unwrap_or(false) {
+                if let Some(url) = std::str::from_utf8(&msg).ok() {
+                    launch(url.to_owned());
+                }
             }
         }
     }
@@ -204,5 +215,109 @@ fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
         let key = X25519::genkey();
         file.write_all(&*key)?;
         Ok(key)
+    }
+}
+
+async fn prompt_async(tofu: &RwLock<Tofu>, key: &Pubkey) -> io::Result<bool> {
+    if tofu.read().await.allowed.contains(key) {
+        Ok(true)
+    } else {
+        let stdin_a = io::stdin();
+        let accepted = {
+            let mut stdin = stdin_a.lock();
+            let mut line = String::new();
+            loop {
+                println!(
+                    "Incoming link from {}, accept? (Y/N): ",
+                    base64::encode(key)
+                );
+                stdin.read_line(&mut line)?;
+                match line.chars().next() {
+                    Some('Y') => {
+                        break true;
+                    }
+                    Some('N') => {
+                        break false;
+                    }
+                    _ => {
+                        println!("Please answer \"Y\" or \"N\"");
+                    }
+                }
+            }
+        };
+        if accepted {
+            let mut tofu = tofu.write().await;
+            tofu.allowed.insert(Clone::clone(key));
+            tofu.save("allowed_devices.txt")?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+fn prompt(tofu: &mut Tofu, key: &Pubkey) -> io::Result<bool> {
+    if tofu.allowed.contains(key) {
+        Ok(true)
+    } else {
+        let stdin_a = io::stdin();
+        let mut stdin = stdin_a.lock();
+        let mut line = String::new();
+        let accepted = loop {
+            println!(
+                "Incoming link from {}, accept? (Y/N): ",
+                base64::encode(key)
+            );
+            stdin.read_line(&mut line)?;
+            match line.chars().next() {
+                Some('Y') => {
+                    break true;
+                }
+                Some('N') => {
+                    break false;
+                }
+                _ => {
+                    println!("Please answer \"Y\" or \"N\"");
+                }
+            }
+        };
+        if accepted {
+            tofu.allowed.insert(Clone::clone(key));
+            tofu.save("allowed_devices.txt")?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+struct Tofu {
+    allowed: HashSet<Pubkey>,
+}
+
+impl Tofu {
+    fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        if let Ok(mut file) = File::open(path.as_ref()) {
+            Ok(Self {
+                allowed: BufReader::new(file)
+                    .lines()
+                    .flat_map(|l| l)
+                    .flat_map(|line| (&base64::decode(line).ok()?[..]).try_into().ok())
+                    .collect(),
+            })
+        } else {
+            let mut file = File::create(path.as_ref())?;
+            Ok(Self {
+                allowed: HashSet::new(),
+            })
+        }
+    }
+    fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let mut file = File::create(path.as_ref())?;
+        for key in self.allowed.iter().map(|k| base64::encode(k)) {
+            file.write_all(key.as_bytes())?;
+            file.write_all(b"\n")?;
+        }
+        Ok(())
     }
 }
