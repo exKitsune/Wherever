@@ -1,6 +1,8 @@
 package com.fruit.wherever;
 
 import android.app.Activity;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
@@ -10,6 +12,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.database.Cursor;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,43 +22,70 @@ import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.util.Pair;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.CompoundButton;
+import android.widget.ListView;
+import android.widget.SimpleCursorAdapter;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.widget.ToggleButton;
 
 import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.preference.PreferenceFragmentCompat;
 
+import org.w3c.dom.Text;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Array;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+
+import static android.app.NotificationChannel.DEFAULT_CHANNEL_ID;
 
 
 public class SettingsActivity extends AppCompatActivity {
     private DBManager dbManager = new DBManager(this);
 
     final String[] from = new String[] { DatabaseHelper.HOST, DatabaseHelper.COMPONENT };
-    final String ACTION_APP_OPEN = "com.fruit.wherever.ACTION_APP_OPEN";
-    final String ACTION_DEFAULT_SET = "com.fruit.wherever.ACTION_DEFAULT_SET";
+    final int[] to = new int[] { R.id.hostTextView, R.id.compTextView };
 
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP_MR1)
+    final static String ACTION_APP_OPEN = "com.fruit.wherever.ACTION_APP_OPEN";
+    final static String ACTION_DEFAULT_SET = "com.fruit.wherever.ACTION_DEFAULT_SET";
+    final static String ACTION_TURN_ON = "com.fruit.wherever.ACTION_TURN_ON";
+
+    static Activity c;
+
+    public static boolean getStatus() {
+        SharedPreferences prefs = c.getPreferences(Context.MODE_PRIVATE);
+        return prefs.getBoolean("enabled", false);
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.O)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        c = this;
         Intent intent = getIntent();
         Log.e("BRUH", "intent aaaaa" + intent);
         SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
-        if(intent.getAction().equals(ACTION_APP_OPEN)) {
+        if(intent.getAction() != null && intent.getAction().equals(ACTION_APP_OPEN)) {
             Log.e("BRUH", "ACTION_APP_OPEN CALLBACK");
             Log.e("BRUH", intent.toString());
             ComponentName chosen_app = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
@@ -67,25 +97,34 @@ public class SettingsActivity extends AppCompatActivity {
                 Uri uri = Uri.parse(url);
                 String host = uri.getHost();
                 dbManager.open();
-                dbManager.put(host, chosen_app.flattenToString());
+                Long currentTime = Calendar.getInstance().getTimeInMillis();
+                dbManager.put(host, chosen_app.flattenToString(), currentTime);
                 dbManager.close();
             }
             finish();
             return;
         }
-        if(intent.getAction().equals(ACTION_DEFAULT_SET)) {
+        if(intent.getAction() != null && intent.getAction().equals(ACTION_DEFAULT_SET)) {
             Log.e("BRUH", "ACTION_DEFAULT_SET CALLBACK");
             ComponentName chosen_app = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
-            String def_app = intent.getStringExtra("url");
+            Log.e("New def app", chosen_app.flattenToString());
             if(!chosen_app.flattenToString().equals("com.fruit.wherever/com.fruit.wherever.SettingsActivity")) {
                 dbManager.open();
-                dbManager.put(def_app, chosen_app.flattenToString());
+                dbManager.put("DEFAULT_BROWSER", chosen_app.flattenToString(), 0);
                 dbManager.close();
             }
             finish();
             return;
         }
-        if(intent.getAction() == Intent.ACTION_SEND || intent.getAction() == Intent.ACTION_VIEW) {
+        if(intent.getAction() != null && intent.getAction().equals(ACTION_TURN_ON)) {
+            SharedPreferences.Editor editor = prefs.edit();
+            Log.e("enabling", "" + !prefs.getBoolean("enabled", false));
+            editor.putBoolean("enabled", !prefs.getBoolean("enabled", false));
+            editor.apply();
+            finish();
+            return;
+        }
+        if(intent.getAction() != null && intent.getAction() == Intent.ACTION_SEND || intent.getAction() == Intent.ACTION_VIEW) {
             Log.e("BRUH", "ACTION_SEND or ACTION_VIEW");
             Uri uri;
             if(intent.getAction() == Intent.ACTION_SEND && intent.getType() != null) {
@@ -118,9 +157,11 @@ public class SettingsActivity extends AppCompatActivity {
                         return;
                     }
                     Log.e("BRUH", "ip: " + home_ip + ", port: " + home_port);
+
                     Runnable r = new Runnable() {
                         @Override
                         public void run() {
+                            boolean good = true;
                             try {
                                 Log.e("BRUH", "I'm gonna send the response");
                                 URL url = new URL("http://" + home_ip + ":" + home_port + "/open");
@@ -128,13 +169,38 @@ public class SettingsActivity extends AppCompatActivity {
                                 con.setDoOutput(true);
                                 con.setRequestMethod("POST");
                                 con.setRequestProperty("Content-Type", "text/plain; utf-8");
+                                con.setConnectTimeout(5000);
                                 try (OutputStream os = con.getOutputStream()) {
                                     byte[] input = uri.toString().getBytes("utf-8");
                                     os.write(input, 0, input.length);
                                 }
-                                Log.e("BRUH", "HTTP Response: " + con.getResponseCode());
+                                int rc = con.getResponseCode();
+                                if(rc != 200) {
+                                    good = false;
+                                }
+                                Log.e("BRUH", "HTTP Response: " + rc);
                             } catch (Exception e) {
                                 Log.e("BRUH", e.toString());
+                                good = false;
+                            }
+
+                            if(!good) {
+                                Thread thread = new Thread() {
+                                    public void run() {
+                                        runOnUiThread(new Runnable() {
+                                            public void run() {
+                                                int duration = Toast.LENGTH_LONG;
+                                                Toast toast = Toast.makeText(getApplicationContext(), "Wherever Server Connection Unstable\nTurning OFF", duration);
+                                                toast.show();
+
+                                                SharedPreferences.Editor editor = prefs.edit();
+                                                editor.putBoolean("enabled", false);
+                                                editor.apply();
+                                            }
+                                        });
+                                    }
+                                };
+                                thread.start();
                             }
                         }
                     };
@@ -162,7 +228,7 @@ public class SettingsActivity extends AppCompatActivity {
                             Log.e("bRUh", "1 "+intent.getComponent());
 
                             sendIntent.fillIn(intent, 0);
-                            sendIntent.addFlags(Intent.FLAG_ACTIVITY_REQUIRE_NON_BROWSER | Intent.FLAG_ACTIVITY_FORWARD_RESULT);
+                            sendIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
                             Intent receiver = new Intent(this, SettingsActivity.class)
                                     .putExtra("url", intent.getData().toString()).setAction(ACTION_APP_OPEN);
                             PendingIntent pendingIntent = PendingIntent.getActivity(this, 1, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
@@ -170,7 +236,6 @@ public class SettingsActivity extends AppCompatActivity {
 
                             List<String> blacklist = new ArrayList<String>();
                             blacklist.add("com.fruit.wherever");
-                            blacklist.add("org.chromium.webview_shell");
 
                             String default_browser = null;
                             String potential_browsers = null;
@@ -196,20 +261,28 @@ public class SettingsActivity extends AppCompatActivity {
                                 }
                             }
 
-                            Log.e("def browser", default_browser);
+                            //Log.e("def browser", default_browser);
 
                             String[] final_blacklist = blacklist.toArray(new String[blacklist.size()]);
                             for (String s : final_blacklist) {
                                 Log.e("f black", s);
                             }
 
-                            startActivity(generateCustomChooserIntent(sendIntent, final_blacklist, pendingIntent, "Send Link").first);
+                            Pair<Intent, List<Intent>> cci = generateCustomChooserIntent(sendIntent, final_blacklist, pendingIntent, "Send Link");
+                            if(cci.second.size() > 1) {
+                                startActivity(cci.first);
+                            } else {
+                                sendIntent.setComponent(cci.second.get(0).getComponent());
+                                startActivity(sendIntent);
+                            }
 
                         } else {
                             Intent finalIntent = new Intent();
                             finalIntent.fillIn(intent, 0);
                             finalIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
                             finalIntent.setComponent(ComponentName.unflattenFromString(component));
+                            Long currentTime = Calendar.getInstance().getTimeInMillis();
+                            dbManager.put(host, component, currentTime);
                             startActivity(finalIntent);
                         }
                         dbManager.close();
@@ -228,6 +301,29 @@ public class SettingsActivity extends AppCompatActivity {
 
             boolean enabled = prefs.getBoolean("enabled", false);
 
+            ListView listView = (ListView) findViewById(R.id.listView);
+            dbManager.open();
+            Cursor cursor = dbManager.fetchAll();
+            SimpleCursorAdapter adapter = new SimpleCursorAdapter(this, R.layout.listview_row, cursor, from, to, 0);
+            adapter.notifyDataSetChanged();
+
+            listView.setAdapter(adapter);
+
+            listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+                @Override
+                public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                    TextView hTextView = (TextView) view.findViewById(R.id.hostTextView);
+                    String host = hTextView.getText().toString();
+
+                    Intent modifyIntent = new Intent(getApplicationContext(), ModifyRecord.class);
+                    modifyIntent.putExtra("host", host);
+
+                    startActivity(modifyIntent);
+                    finish();
+                    return;
+                }
+            });
+            dbManager.close();
             TextView textView = (TextView) findViewById(R.id.conn_info);
 
             String home_ip = prefs.getString("ip", "192.168.1.11");
@@ -258,9 +354,8 @@ public class SettingsActivity extends AppCompatActivity {
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"));
                     Intent sendIntent = new Intent();
                     sendIntent.fillIn(intent, 0);
-                    String[] blacklist = new String[]{"com.fruit.wherever"};
-                    Intent receiver = new Intent(SettingsActivity.this, SettingsActivity.class)
-                            .putExtra("url", "DEFAULT_BROWSER").setAction(ACTION_DEFAULT_SET);
+                    String[] blacklist = new String[]{"com.fruit.wherever", "org.chromium.webview_shell"};
+                    Intent receiver = new Intent(SettingsActivity.this, SettingsActivity.class).setAction(ACTION_DEFAULT_SET);
                     PendingIntent pendingIntent = PendingIntent.getActivity(SettingsActivity.this, 1, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
                     Pair<Intent, List<Intent>> cci = generateCustomChooserIntent(sendIntent, blacklist, pendingIntent, "Choose a default browser");
                     String potential_browsers = "";
@@ -271,7 +366,7 @@ public class SettingsActivity extends AppCompatActivity {
                     }
                     potential_browsers = String.join(",", pbList);
                     dbManager.open();
-                    dbManager.put("POTENTIAL_BROWSERS", potential_browsers);
+                    dbManager.put("POTENTIAL_BROWSERS", potential_browsers, 0);
                     dbManager.close();
                     startActivity(cci.first);
                 }
@@ -326,15 +421,50 @@ public class SettingsActivity extends AppCompatActivity {
                     targetedShareIntents.add(targetedShareIntent);
                 }
 
-                List<Intent> tSI = targetedShareIntents;
+                List<Intent> tSI = new ArrayList<>(targetedShareIntents);
                 Log.e("sizeof tsi", String.valueOf(tSI.size()));
+
                 chooserIntent = Intent.createChooser(targetedShareIntents.remove(targetedShareIntents.size() - 1), message, pendingIntent.getIntentSender());
                 chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, targetedShareIntents.toArray(new Parcelable[]{}));
+
                 return new Pair<>(chooserIntent, tSI);
             }
         }
 
         return new Pair<>(Intent.createChooser(prototype, message, pendingIntent.getIntentSender()), new ArrayList<>());
     }
+
+//    @RequiresApi(api = Build.VERSION_CODES.O)
+//    private void logLinks(Context c, String msg) {
+//        File path = c.getFilesDir();
+//        File logFile = new File(path, "last-fifty-links.txt");
+//        int length = (int) logFile.length();
+//
+//        byte[] bytes = new byte[length];
+//
+//        try {
+//            FileInputStream in = new FileInputStream(logFile);
+//            try {
+//                in.read(bytes);
+//            } finally {
+//                in.close();
+//            }
+//            List<String> contents = Arrays.asList(new String(bytes).split("\n"));
+//
+//            contents = contents.subList(1, contents.size());
+//            contents.add(msg);
+//
+//            String toFile = String.join("", contents);
+//
+//            FileOutputStream stream = new FileOutputStream(logFile);
+//            try {
+//                stream.write(toFile.getBytes());
+//            } finally {
+//                stream.close();
+//            }
+//        } catch (IOException e) {
+//            Log.e("Wherever", e.toString());
+//        }
+//    }
 }
 

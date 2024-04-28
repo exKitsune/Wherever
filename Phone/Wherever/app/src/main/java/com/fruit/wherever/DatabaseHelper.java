@@ -10,8 +10,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String TABLE_NAME = "USERPREF";
 
     // Table columns
-    public static final String HOST = "host";
+    public static final String HOST = "_id";
     public static final String COMPONENT = "component";
+    public static final String ACCESSED = "accessed";
 
     // Database Information
     static final String DB_NAME = "WHEREVER_USER_PREF.DB";
@@ -20,7 +21,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     static final int DB_VERSION = 1;
 
     // Creating table query
-    private static final String CREATE_TABLE = "create table " + TABLE_NAME + "(" + HOST + " TEXT NOT NULL PRIMARY KEY, " + COMPONENT + " TEXT NOT NULL);";
+    private static final String CREATE_TABLE = "create table " + TABLE_NAME + "(" + HOST + " TEXT NOT NULL PRIMARY KEY, " + COMPONENT + " TEXT NOT NULL, " + ACCESSED + " BIGINT NOT NULL);";
 
     public DatabaseHelper(Context context) {
         super(context, DB_NAME, null, DB_VERSION);

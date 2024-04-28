@@ -5,6 +5,8 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
+import android.provider.ContactsContract;
+import android.util.Log;
 
 import static com.fruit.wherever.DatabaseHelper.TABLE_NAME;
 
@@ -30,17 +32,18 @@ public class DBManager {
         dbHelper.close();
     }
 
-    public void insert(String host, String component) {
+    public void insert(String host, String component, long accessed ) {
         host = host.toLowerCase();
         ContentValues contentValue = new ContentValues();
         contentValue.put(DatabaseHelper.HOST, host);
         contentValue.put(DatabaseHelper.COMPONENT, component);
+        contentValue.put(DatabaseHelper.ACCESSED, accessed);
         database.insert(TABLE_NAME, null, contentValue);
     }
 
     public Cursor fetch(String host) {
         host = host.toLowerCase();
-        String[] columns = new String[] { DatabaseHelper.HOST, DatabaseHelper.COMPONENT };
+        String[] columns = new String[] { DatabaseHelper.HOST, DatabaseHelper.COMPONENT, DatabaseHelper.ACCESSED };
         String selection = DatabaseHelper.HOST + " = ?";
         String[] selectionArgs = { host };
 
@@ -49,30 +52,47 @@ public class DBManager {
         return cursor;
     }
 
-    public int update(String host, String component) {
+    public Cursor fetchAll() {
+        String[] columns = new String[] { DatabaseHelper.HOST, DatabaseHelper.COMPONENT, DatabaseHelper.ACCESSED };
+        String selection = DatabaseHelper.HOST + " != ? AND " + DatabaseHelper.HOST + " != ?";
+        String[] selectionArgs = { "default_browser", "potential_browsers" };
+        Cursor cursor = database.query(TABLE_NAME, columns, selection, selectionArgs, null, null, DatabaseHelper.ACCESSED + " DESC");
+        while (cursor.moveToNext()) {
+            Log.e("query", cursor.getString(cursor.getColumnIndex(DatabaseHelper.HOST)));
+        }
+        return cursor;
+    }
+
+    public int update(String host, String component, long accessed) {
         host = host.toLowerCase();
         ContentValues contentValues = new ContentValues();
-        contentValues.put(DatabaseHelper.HOST, host);
+        //contentValues.put(DatabaseHelper.HOST, host);
         contentValues.put(DatabaseHelper.COMPONENT, component);
-        int i = database.update(TABLE_NAME, contentValues, DatabaseHelper.HOST + " = " + host, null);
+        contentValues.put(DatabaseHelper.ACCESSED, accessed);
+        String selection = DatabaseHelper.HOST + " LIKE ?";
+        String[] selectionArgs = { host };
+
+        int i = database.update(TABLE_NAME, contentValues, selection, selectionArgs);
         return i;
     }
 
-    public int put(String host, String component) {
+    public int put(String host, String component, long accessed) {
         Cursor cursor = fetch(host);
         if (cursor.getCount() == 0) {
-            insert(host, component);
+            insert(host, component, accessed);
             cursor.close();
             return 0;
         } else {
             cursor.close();
-            return update(host, component);
+            return update(host, component, accessed);
         }
     }
 
     public void delete(String host) {
         host = host.toLowerCase();
-        database.delete(TABLE_NAME, DatabaseHelper.HOST + "=" + host, null);
+        String selection = DatabaseHelper.HOST + " LIKE ?";
+        String[] selectionArgs = { host };
+        database.delete(TABLE_NAME, selection, selectionArgs);
     }
 
     public void drop() {
