@@ -1,7 +1,11 @@
 use std::collections::{hash_map::Entry, HashMap};
 use std::convert::TryInto;
 
+use futures::stream::StreamExt;
+
 use wasm_bindgen::prelude::*;
+
+use websocket_wasm::{Message, WebSocket};
 
 use wherever_crypto::{relay_client_handshake, Key, Pubkey};
 
@@ -18,11 +22,51 @@ macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
-#[wasm_bindgen]
 pub struct JSState {
     key: Key,
     handshake: HandshakeState<X25519, ChaCha20Poly1305, Blake2b>,
     tofu: Tofu,
+}
+
+#[wasm_bindgen(start)]
+pub fn start() {
+    wasm_bindgen_futures::spawn_local(main())
+}
+
+async fn main() {
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let mut state = new_state();
+
+    let qr = qr_code();
+    let qr_element = document.get_element_by_id("qrcode").unwrap();
+    let mut qr_html = qr_element.outer_html();
+    qr_html.push_str(&qr);
+    qr_element.set_outer_html(&qr_html);
+
+    let location = window.location();
+    let protocol = match &*location.protocol().unwrap() {
+        "http:" => "ws://",
+        _ => "wss://",
+    };
+    let host = location.host().unwrap();
+
+    let mut socket = WebSocket::new(&format!("{}{}/stream", protocol, host))
+        .await
+        .unwrap();
+
+    socket.send(Message::binary(state.first_message())).unwrap();
+
+    let msg = socket.next().await.unwrap();
+    state.response(&msg.into_data());
+    socket.send(state.second_message().into());
+
+    let mut cipher = state.into_cipher();
+    loop {
+        let msg = socket.next().await.unwrap();
+        let decrypted = cipher.decrypt_message(&msg.into_data());
+        window.open_with_url_and_target_and_features(&decrypted, "_blank", "noreferrer,noopener");
+    }
 }
 
 fn load_key(storage: &web_sys::Storage) -> Key {
@@ -50,7 +94,6 @@ fn load_tofu(storage: &web_sys::Storage) -> Tofu {
         })
 }
 
-#[wasm_bindgen]
 pub fn qr_code() -> String {
     let storage = web_sys::window().unwrap().local_storage().unwrap().unwrap();
     let key = load_key(&storage);
@@ -66,7 +109,6 @@ pub fn qr_code() -> String {
     string
 }
 
-#[wasm_bindgen]
 pub fn new_state() -> JSState {
     let storage = web_sys::window().unwrap().local_storage().unwrap().unwrap();
     let key = load_key(&storage);
@@ -79,7 +121,6 @@ pub fn new_state() -> JSState {
     }
 }
 
-#[wasm_bindgen]
 impl JSState {
     pub fn first_message(&mut self) -> Vec<u8> {
         self.handshake.write_message_vec(&[]).unwrap()
@@ -99,7 +140,6 @@ impl JSState {
     }
 }
 
-#[wasm_bindgen]
 pub struct JSCipher {
     key: Key,
     relay_cipher: CipherState<ChaCha20Poly1305>,
@@ -158,7 +198,6 @@ impl Tofu {
     }
 }
 
-#[wasm_bindgen]
 impl JSCipher {
     pub fn decrypt_message(&mut self, msg: &[u8]) -> String {
         let relay_dec = self.relay_cipher.decrypt_vec(msg);

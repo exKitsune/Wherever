@@ -1924,6 +1924,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "websocket_wasm"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "wherever_crypto"
 version = "0.1.0"
 dependencies = [
@@ -1946,11 +1959,14 @@ name = "wherever_web"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "futures",
  "getrandom 0.2.2",
  "qrcode",
  "serde",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
+ "websocket_wasm",
  "wherever_crypto",
 ]
 

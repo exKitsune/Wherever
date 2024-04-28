@@ -1,5 +1,5 @@
 [workspace]
-members = ["server", "crypto", "crypto_java", "web", "web_compiled"]
+members = ["server", "crypto", "crypto_java", "web", "web_compiled", "websocket_wasm"]
 
 [patch.crates-io]
 noise-protocol = { git = "https://github.com/exrook/noise-rust/" }

@@ -13,7 +13,10 @@ crate-type = ["cdylib"]
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 wherever_crypto = { path = "../crypto/" }
 getrandom = { version = "0.2.2", features = ["js"] }
-web-sys = { version = "0.3", features = ["Window", "Storage"] }
+web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Element", "Location"] }
 base64 = "0.13"
 serde = {version = "1", features = ["derive"]}
 qrcode = "0.12"
+websocket_wasm = { path = "../websocket_wasm" }
+wasm-bindgen-futures = "0.4.20"
+futures = "0.3"
