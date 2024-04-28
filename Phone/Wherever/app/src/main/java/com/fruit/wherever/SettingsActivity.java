@@ -164,7 +164,7 @@ public class SettingsActivity extends AppCompatActivity {
                         .setTitle("Drop Database")
                         .setMessage("Do you really want to reset all preferences?")
                         .setIcon(android.R.drawable.ic_dialog_alert)
-                        .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
+                        .setNegativeButton(android.R.string.yes, new DialogInterface.OnClickListener() {
 
                             public void onClick(DialogInterface dialog, int whichButton) {
                                 dbManager.open();
@@ -174,7 +174,22 @@ public class SettingsActivity extends AppCompatActivity {
                                 SettingsActivity.this.recreate();
                                 Toast.makeText(SettingsActivity.this, "Reset Preferences", Toast.LENGTH_SHORT).show();
                             }})
-                        .setNegativeButton(android.R.string.no, null).show();
+                        .setPositiveButton(android.R.string.no, null).show();
+            }
+        });
+
+        Button helpButton = (Button) findViewById(R.id.help);
+        helpButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                new AlertDialog.Builder(SettingsActivity.this)
+                        .setTitle("How to use this app")
+                        .setMessage("Simply set Wherever to be the default browser and link handler in android settings\n\n" +
+                                "Afterwards, launch a server on your computer, and scan the QR code with your camera\n\n" +
+                                "Links clicked on your phone will now be instantly forwarded to the server\n\n" +
+                                "More info can be found at\nhttps://github.com/exKitsune/Wherever/")
+                        .setIcon(android.R.drawable.ic_dialog_info)
+                        .setPositiveButton(android.R.string.yes, null).show();
             }
         });
     }

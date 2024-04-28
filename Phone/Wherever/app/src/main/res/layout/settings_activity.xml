@@ -44,13 +44,29 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <Button
-        android:id="@+id/drop"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_weight=".3"
-        android:onClick="dropdb"
-        android:text="Reset Preferences" />
+    <LinearLayout
+        android:layout_width="fill_parent"
+        android:layout_height="0dp"
+        android:layout_weight="2"
+        android:gravity="center_horizontal"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/drop"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:onClick="dropdb"
+            android:text="Reset Preferences" />
+
+        <Button
+            android:id="@+id/help"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:onClick="help_btn"
+            android:text="HELP" />
+    </LinearLayout>
 
     <Space
         android:layout_width="match_parent"
