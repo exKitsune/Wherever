@@ -84,6 +84,8 @@ public class SettingsActivity extends AppCompatActivity {
         c = this;
         Intent intent = getIntent();
         Log.e("BRUH", "intent aaaaa" + intent);
+        Log.e("BRUH", "LOG INTENT: " + intentToString(intent));
+        Log.d("BRUH", "bruh sender" + this.getReferrer().getHost());
         SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
         if(intent.getAction() != null && intent.getAction().equals(ACTION_APP_OPEN)) {
             Log.e("BRUH", "ACTION_APP_OPEN CALLBACK");
@@ -219,8 +221,11 @@ public class SettingsActivity extends AppCompatActivity {
 
                         Log.d("bruh host", host);
                         Log.d("bruh component", component == null ? "null" : component);
-
-                        if (component == null) {
+                        boolean sameComponent = false;
+                        if (component != null) {
+                            sameComponent = component.split("/")[0].equals(this.getReferrer().getHost());
+                        }
+                        if ((component == null) || sameComponent) {
                             Intent sendIntent = new Intent();
 
                             Log.e("bRUh", "1 "+intent.getAction());
@@ -236,44 +241,52 @@ public class SettingsActivity extends AppCompatActivity {
 
                             List<String> blacklist = new ArrayList<String>();
                             blacklist.add("com.fruit.wherever");
+                            blacklist.add(this.getReferrer().getHost());
 
                             String default_browser = null;
+                            ComponentName default_browser_full = null;
                             String potential_browsers = null;
 
                             cursor = dbManager.fetch("DEFAULT_BROWSER");
 
                             while (cursor.moveToNext()) {
-                                default_browser = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT)).split("/")[0];
+                                default_browser_full = ComponentName.unflattenFromString(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT)));
+                                default_browser = default_browser_full.getPackageName();
                             }
                             cursor.close();
-                            cursor = dbManager.fetch("POTENTIAL_BROWSERS");
-                            while (cursor.moveToNext()) {
-                                potential_browsers = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT));
-                            }
-                            cursor.close();
-                            if(potential_browsers != null) {
-                                List<String> pbList = Arrays.asList(potential_browsers.split(","));
-                                for(String s : pbList) {
-                                    s = s.split("/")[0];
-                                    if (!s.equals(default_browser)) {
-                                        blacklist.add(s);
+                            if (sameComponent) { // If we find the intent is going back to the app that sent it, send to default browser instead
+                                sendIntent.setComponent(default_browser_full);
+                                startActivity(sendIntent);
+                            } else {
+                                cursor = dbManager.fetch("POTENTIAL_BROWSERS");
+                                while (cursor.moveToNext()) {
+                                    potential_browsers = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COMPONENT));
+                                }
+                                cursor.close();
+                                if(potential_browsers != null) {
+                                    List<String> pbList = Arrays.asList(potential_browsers.split(","));
+                                    for(String s : pbList) {
+                                        s = s.split("/")[0];
+                                        if (!s.equals(default_browser)) {
+                                            blacklist.add(s);
+                                        }
                                     }
                                 }
-                            }
 
-                            //Log.e("def browser", default_browser);
+                                //Log.e("def browser", default_browser);
 
-                            String[] final_blacklist = blacklist.toArray(new String[blacklist.size()]);
-                            for (String s : final_blacklist) {
-                                Log.e("f black", s);
-                            }
+                                String[] final_blacklist = blacklist.toArray(new String[blacklist.size()]);
+                                for (String s : final_blacklist) {
+                                    Log.e("f black", s);
+                                }
 
-                            Pair<Intent, List<Intent>> cci = generateCustomChooserIntent(sendIntent, final_blacklist, pendingIntent, "Send Link");
-                            if(cci.second.size() > 1) {
-                                startActivity(cci.first);
-                            } else {
-                                sendIntent.setComponent(cci.second.get(0).getComponent());
-                                startActivity(sendIntent);
+                                Pair<Intent, List<Intent>> cci = generateCustomChooserIntent(sendIntent, final_blacklist, pendingIntent, "Send Link");
+                                if(cci.second.size() > 1 && !sameComponent) {
+                                    startActivity(cci.first);
+                                } else {
+                                    sendIntent.setComponent(cci.second.get(0).getComponent());
+                                    startActivity(sendIntent);
+                                }
                             }
 
                         } else {
@@ -390,8 +403,16 @@ public class SettingsActivity extends AppCompatActivity {
         List<HashMap<String, String>> intentMetaInfo = new ArrayList<HashMap<String, String>>();
         Intent chooserIntent;
 
-        List<ResolveInfo> resInfo = getPackageManager().queryIntentActivities(prototype, PackageManager.MATCH_ALL);
+        //List<ResolveInfo> resInfo = getPackageManager().queryIntentActivities(prototype, PackageManager.MATCH_ALL);
+        Intent query = new Intent();
+        query.setAction(prototype.getAction());
+        query.setData(prototype.getData());
+        List<ResolveInfo> resInfo = getPackageManager().queryIntentActivities(query, PackageManager.MATCH_ALL);
         Log.e("size of res", String.valueOf(resInfo.size()));
+
+        for(ResolveInfo res : resInfo) {
+            Log.e("res", res.activityInfo.packageName);
+        }
         if (!resInfo.isEmpty()) {
             for (ResolveInfo resolveInfo : resInfo) {
                 if (resolveInfo.activityInfo == null || Arrays.asList(forbiddenChoices).contains(resolveInfo.activityInfo.packageName))
@@ -432,6 +453,64 @@ public class SettingsActivity extends AppCompatActivity {
         }
 
         return new Pair<>(Intent.createChooser(prototype, message, pendingIntent.getIntentSender()), new ArrayList<>());
+    }
+
+    public static String intentToString(Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+
+        return intent.toString() + " " + bundleToString(intent.getExtras());
+    }
+
+    public static String bundleToString(Bundle bundle) {
+        StringBuilder out = new StringBuilder("Bundle[");
+
+        if (bundle == null) {
+            out.append("null");
+        } else {
+            boolean first = true;
+            for (String key : bundle.keySet()) {
+                if (!first) {
+                    out.append(", ");
+                }
+
+                out.append(key).append('=');
+
+                Object value = bundle.get(key);
+
+                if (value instanceof int[]) {
+                    out.append(Arrays.toString((int[]) value));
+                } else if (value instanceof byte[]) {
+                    out.append(Arrays.toString((byte[]) value));
+                } else if (value instanceof boolean[]) {
+                    out.append(Arrays.toString((boolean[]) value));
+                } else if (value instanceof short[]) {
+                    out.append(Arrays.toString((short[]) value));
+                } else if (value instanceof long[]) {
+                    out.append(Arrays.toString((long[]) value));
+                } else if (value instanceof float[]) {
+                    out.append(Arrays.toString((float[]) value));
+                } else if (value instanceof double[]) {
+                    out.append(Arrays.toString((double[]) value));
+                } else if (value instanceof String[]) {
+                    out.append(Arrays.toString((String[]) value));
+                } else if (value instanceof CharSequence[]) {
+                    out.append(Arrays.toString((CharSequence[]) value));
+                } else if (value instanceof Parcelable[]) {
+                    out.append(Arrays.toString((Parcelable[]) value));
+                } else if (value instanceof Bundle) {
+                    out.append(bundleToString((Bundle) value));
+                } else {
+                    out.append(value);
+                }
+
+                first = false;
+            }
+        }
+
+        out.append("]");
+        return out.toString();
     }
 
 //    @RequiresApi(api = Build.VERSION_CODES.O)
