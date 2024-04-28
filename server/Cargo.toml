@@ -19,6 +19,7 @@ base64 = "0.13"
 getopts = "0.2"
 rand = { version = "0.8", features = ["small_rng"] }
 
+wherever = { path = "../wherever", features = ["tungstenite"] }
 wherever_crypto = { path = "../crypto" }
 wherever_web_compiled = { path = "../web_compiled" }
 

@@ -1381,6 +1381,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "warp",
+ "wherever",
  "wherever_crypto",
  "wherever_web_compiled",
 ]
@@ -1937,6 +1938,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wherever"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "futures",
+ "rand 0.8.3",
+ "tokio",
+ "tokio-tungstenite",
+ "websocket_wasm",
+ "wherever_crypto",
+ "wordlist",
+]
+
+[[package]]
 name = "wherever_crypto"
 version = "0.1.0"
 dependencies = [
@@ -1961,12 +1976,14 @@ dependencies = [
  "base64",
  "futures",
  "getrandom 0.2.2",
+ "js-sys",
  "qrcode",
  "serde",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "websocket_wasm",
+ "wherever",
  "wherever_crypto",
 ]
 
@@ -2013,6 +2030,10 @@ checksum = "0120db82e8a1e0b9fb3345a539c478767c0048d842860994d96113d5b667bd69"
 dependencies = [
  "winapi",
 ]
+
+[[package]]
+name = "wordlist"
+version = "0.1.0"
 
 [[package]]
 name = "x25519-dalek"

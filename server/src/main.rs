@@ -19,13 +19,15 @@ use tokio_tungstenite::tungstenite::http::Uri;
 use warp::ws::{self, WebSocket};
 use warp::Filter;
 
-use futures::{select, FutureExt, SinkExt, StreamExt};
+use futures::{pin_mut, select, FutureExt, SinkExt, StreamExt};
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 use wherever_crypto::noise_protocol::{HandshakeState, U8Array, DH};
 use wherever_crypto::noise_rust_crypto::{Blake2b, ChaCha20Poly1305, X25519};
 use wherever_crypto::{Key, Pubkey};
+
+use wherever::{Tofu, TofuEntry, TofuStorage, UntrustedEntry};
 
 fn main() {
     let mut opts = getopts::Options::new();
@@ -101,7 +103,7 @@ fn start(matches: getopts::Matches) {
         let tofu_file = matches
             .opt_str("allowed_list")
             .unwrap_or("allowed.txt".to_owned());
-        let tofu = Arc::new(RwLock::new(Tofu::load(tofu_file).unwrap()));
+        let tofu = Arc::new(RwLock::new(Tofu::load(tofu_file)));
 
         let relay_server_uri: Option<Uri> = matches.opt_get("c").unwrap();
         let launch_standalone = relay_server_uri.is_none() || standalone_explicit;
@@ -140,11 +142,11 @@ fn start(matches: getopts::Matches) {
     }
 }
 
-async fn standalone(
+async fn standalone<S: Send + Sync + 'static>(
     key: Key,
     addr: SocketAddr,
-    tofu: Arc<RwLock<Tofu>>,
-    channel: mpsc::Sender<(oneshot::Sender<bool>, Pubkey, u64)>,
+    tofu: Arc<RwLock<Tofu<S>>>,
+    channel: mpsc::Sender<(oneshot::Sender<Option<String>>, UntrustedEntry)>,
 ) {
     warp::serve(
         warp::path("open")
@@ -156,17 +158,14 @@ async fn standalone(
                 let tofu = tofu.clone();
                 let channel = channel.clone();
                 async move {
-                    if let Ok((client_key, seq, msg)) =
-                        wherever_crypto::decrypt_client_message(&*body, key)
-                    {
-                        if prompt_async(&tofu, channel, &client_key, seq)
-                            .await
-                            .unwrap_or(false)
-                        {
-                            let url =
-                                std::str::from_utf8(&msg).map_err(|_| warp::reject::reject())?;
-                            launch(url.to_owned());
+                    if let Some(url) = match tofu.read().await.decrypt_message(&key, &body) {
+                        Ok(TofuEntry::Untrusted(entry)) => {
+                            prompt_async(channel, entry).await.unwrap_or(None)
                         }
+                        Ok(TofuEntry::Trusted(msg)) => Some(msg),
+                        Err(()) => None,
+                    } {
+                        launch(url.to_owned());
                     }
                     Ok::<_, warp::Rejection>("Good")
                 }
@@ -391,46 +390,25 @@ async fn serve_web_client(path: warp::path::FullPath) -> Result<impl warp::Reply
     }
 }
 
-async fn relay_client(
+async fn relay_client<S: Send + Sync>(
     key: Key,
     addr: Uri,
-    tofu: Arc<RwLock<Tofu>>,
-    channel: mpsc::Sender<(oneshot::Sender<bool>, Pubkey, u64)>,
+    tofu: Arc<RwLock<Tofu<S>>>,
+    channel: mpsc::Sender<(oneshot::Sender<Option<String>>, UntrustedEntry)>,
 ) {
-    let (mut socket, _resp) = tokio_tungstenite::connect_async(format!("ws://{}/stream", addr))
+    let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{}/stream", addr))
         .await
         .unwrap();
-
-    let mut handshake = wherever_crypto::relay_client_handshake(key.clone());
-    let msg = handshake.write_message_vec(&[]).unwrap();
-    socket
-        .send(tungstenite::Message::Binary(msg))
-        .await
-        .unwrap();
-    let response = socket.next().await.unwrap().unwrap().into_data();
-    handshake.read_message_vec(&response).unwrap();
-    let msg = handshake.write_message_vec(&[]).unwrap();
-    socket
-        .send(tungstenite::Message::Binary(msg))
-        .await
-        .unwrap();
-    let mut relay_cipher = handshake.get_ciphers().1;
-    while let Some(msg) = socket.next().await.and_then(|x| x.ok()) {
-        if let Ok(msg) = relay_cipher.decrypt_vec(&msg.into_data()) {
-            if let Ok((client_key, seq, msg)) =
-                wherever_crypto::decrypt_client_message(&msg, key.clone())
-            {
-                if prompt_async(&tofu, channel.clone(), &client_key, seq)
-                    .await
-                    .unwrap_or(false)
-                {
-                    if let Some(url) = std::str::from_utf8(&msg).ok() {
-                        launch(url.to_owned());
-                    }
-                }
+    let mut stream = wherever::relay_reciever(socket, key.clone()).await.unwrap();
+    while let Some(msg) = stream.next().await {
+        if let Some(msg) = match tofu.read().await.decrypt_message(&key, &msg) {
+            Ok(TofuEntry::Untrusted(entry)) => {
+                prompt_async(channel.clone(), entry).await.unwrap_or(None)
             }
-        } else {
-            println!("Invalid message from relay");
+            Ok(TofuEntry::Trusted(msg)) => Some(msg),
+            Err(()) => None,
+        } {
+            launch(msg.to_owned());
         }
     }
 }
@@ -449,145 +427,59 @@ fn load_server_key<P: AsRef<Path>>(path: P) -> io::Result<Key> {
 }
 
 async fn prompt_async(
-    tofu: &RwLock<Tofu>,
-    channel: mpsc::Sender<(oneshot::Sender<bool>, Pubkey, u64)>,
-    key: &Pubkey,
-    seq: u64,
-) -> io::Result<bool> {
-    if tofu.read().await.check(key, seq) {
-        Ok(true)
-    } else {
-        let (send, recv) = oneshot::channel();
-        if let Ok(()) = channel.try_send((send, key.clone(), seq)) {
-            Ok(recv.await.unwrap())
-        } else {
-            Ok(false)
-        }
-    }
+    channel: mpsc::Sender<(oneshot::Sender<Option<String>>, UntrustedEntry)>,
+    entry: UntrustedEntry,
+) -> Result<Option<String>, ()> {
+    let (send, recv) = oneshot::channel();
+    channel.try_send((send, entry)).map_err(|_| ())?;
+    Ok(recv.await.map_err(|_| ())?)
 }
 
-fn prompt_user(
+fn prompt_user<S: Send + Sync + TofuStorage>(
     rt: Runtime,
-    tofu: &RwLock<Tofu>,
-    mut channel: mpsc::Receiver<(oneshot::Sender<bool>, Pubkey, u64)>,
+    tofu: &RwLock<Tofu<S>>,
+    mut channel: mpsc::Receiver<(oneshot::Sender<Option<String>>, UntrustedEntry)>,
 ) -> io::Result<()> {
     let stdin_a = io::stdin();
     let mut stdin = stdin_a.lock();
     let mut line = String::new();
-    while let Some((reply, key, seq)) = channel.blocking_recv() {
-        if {
-            if rt.block_on(tofu.read()).check(&key, seq) {
-                reply.send(true).unwrap();
-                continue;
-            } else {
-                loop {
+    while let Some((reply, entry)) = channel.blocking_recv() {
+        if let Some(entry) = {
+            match entry.check(&mut rt.block_on(tofu.write())) {
+                Ok(res) => {
+                    reply.send(res).unwrap();
+                    continue;
+                }
+                Err(entry) => loop {
                     println!(
                         "Incoming link from {}, accept? (Y/N): ",
-                        base64::encode(key)
+                        base64::encode(entry.key)
                     );
                     stdin.read_line(&mut line)?;
                     match line.chars().next() {
                         Some('Y') => {
-                            break true;
+                            break Some(entry);
                         }
                         Some('N') => {
-                            break false;
+                            break None;
                         }
                         _ => {
                             println!("Please answer \"Y\" or \"N\"");
                         }
                     }
-                }
+                },
             }
         } {
             let mut tofu = rt.block_on(tofu.write());
-            let valid = tofu.insert(key.clone(), seq);
-            if valid {
+            if let Some(message) = entry.trust(&mut tofu) {
                 tofu.save()?;
+                reply.send(Some(message));
+            } else {
+                reply.send(None).unwrap();
             }
-            reply.send(valid).unwrap();
         } else {
-            reply.send(false).unwrap();
+            reply.send(None).unwrap();
         }
     }
     Ok(())
-}
-
-struct Tofu {
-    file_path: PathBuf,
-    allowed: HashMap<Pubkey, AtomicU64>,
-}
-
-impl Tofu {
-    fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        if let Ok(file) = File::open(path.as_ref()) {
-            Ok(Self {
-                file_path: path.as_ref().to_owned(),
-                allowed: BufReader::new(file)
-                    .lines()
-                    .flat_map(|l| l)
-                    .flat_map(|line| {
-                        let mut split = line.split(",");
-                        let rest = split.next()?;
-                        let seq: &str = split.next()?;
-                        Some((
-                            (&base64::decode(rest).ok()?[..]).try_into().ok()?,
-                            AtomicU64::new(seq.parse().ok()?),
-                        ))
-                    })
-                    .collect(),
-            })
-        } else {
-            let _file = File::create(path.as_ref())?;
-            Ok(Self {
-                file_path: path.as_ref().to_owned(),
-                allowed: HashMap::new(),
-            })
-        }
-    }
-    /// Check if pubkey is valid, if so check seq number valid, if so set last seq number
-    fn check(&self, key: &Pubkey, seq: u64) -> bool {
-        if let Some(last_seq) = self.allowed.get(key) {
-            if let Ok(_) = last_seq.fetch_update(Ordering::AcqRel, Ordering::Acquire, |last_seq| {
-                if last_seq < seq {
-                    Some(seq)
-                } else {
-                    None
-                }
-            }) {
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
-    fn insert(&mut self, key: Pubkey, seq: u64) -> bool {
-        match self.allowed.entry(key) {
-            Entry::Occupied(mut o) => {
-                let last_seq = o.get_mut().get_mut();
-                if *last_seq < seq {
-                    println!("Seq good {} < {}", last_seq, seq);
-                    *last_seq = seq;
-                    true
-                } else {
-                    println!("Seq BAD  {} > {}", last_seq, seq);
-                    false
-                }
-            }
-            Entry::Vacant(v) => {
-                v.insert(seq.into());
-                true
-            }
-        }
-    }
-    fn save(&self) -> io::Result<()> {
-        let mut file = File::create(&self.file_path)?;
-        for (key, seq) in self.allowed.iter().map(|(k, seq)| (base64::encode(k), seq)) {
-            let s = format!("{},{}\n", key, seq.load(Ordering::Relaxed));
-            file.write_all(s.as_bytes())?;
-        }
-        Ok(())
-    }
 }

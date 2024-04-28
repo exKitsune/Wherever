@@ -1,0 +1,16 @@
+[package]
+name = "wordlist"
+version = "0.1.0"
+authors = ["Jacob Hughes <j@distanthills.org>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[features]
+eff_large = []
+eff_short_1 = []
+eff_short_2 = []
+eff = ["eff_large", "eff_short_1", "eff_short_2"]
+default = ["eff"]

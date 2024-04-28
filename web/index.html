@@ -4,19 +4,56 @@
         <title>
             Wherever Receiver
         </title>
+        <link rel="stylesheet" href="https://unpkg.com/98.css" />
     </head>
-<body>
-    <p> I'm E
-    <p id="result"></p>
-    <div id="qrcode"></div>
-        <script src="wherever_web.js" type="module"></script>
-        <script type="module">
-            import init from './wherever_web.js';
+    <body>
+        <div class="window">
+            <div class="title-bar">
+                <div class="title-bar-text">
+                    Wherever Receiver
+                </div>
+            </div>
+            <div class="window-body">
+                <p id="result"></p>
+                <div class="window" id="qrcode"></div>
+                <button id="discover">Discover</button>
+                <div>
+                    Tofu List:
+                    <div id="tofu_list">
+                        <div id="tofu_list_template">
+                            <div id="key"></div>
+                            <button id="yes"> Trust </button>
+                            <button id="no"> Don't Trust </button>
+                        </div>
+                    </div>
+                </div>
+                <div id="discover_phrase"></div>
+            </div>
+        </div>
+        <div class="window">
+            <div class="title-bar">
+                <div class="title-bar-text">
+                    Wherever Sender
+                </div>
+            </div>
+            <div class="window-body">
+                <button id="send">Send</button>
+                <input id="send_input" type="text">
+                <button id="discover_respond">Discover Respond</button>
+                <input id="discover_input" type="text">
+                Current target:
+                <input id="send_target" type="text"></input>
+                <button id="send_update">Update Target</button>
+            </div>
+        </div>
+            <script src="wherever_web.js" type="module"></script>
+            <script type="module">
+                import init from './wherever_web.js';
 
-            async function run() {
-                await init();
-            }
-            run();
-        </script>
+                async function run() {
+                    await init();
+                }
+                run();
+            </script>
     </body>
 </html>

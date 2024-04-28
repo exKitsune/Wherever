@@ -1,16 +1,29 @@
+use std::cell::{Cell, RefCell};
 use std::collections::{hash_map::Entry, HashMap};
 use std::convert::TryInto;
+use std::future::Future;
+use std::rc::Rc;
 
-use futures::stream::StreamExt;
+use futures::lock::Mutex;
+use futures::pin_mut;
+use futures::stream::{Stream, StreamExt};
+use futures::FutureExt;
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+
+use web_sys::{Document, Storage, Window};
 
 use websocket_wasm::{Message, WebSocket};
 
-use wherever_crypto::{relay_client_handshake, Key, Pubkey};
+use wherever::{
+    initiate_discovery, relay_reciever, respond_discovery, Tofu, TofuEntry, TofuStorage,
+    UntrustedEntry,
+};
+use wherever_crypto::{relay_client_handshake, DiscoveryProtocol, Key, Pubkey};
 
-use wherever_crypto::noise_protocol::{CipherState, HandshakeState, U8Array, DH};
-use wherever_crypto::noise_rust_crypto::{Blake2b, ChaCha20Poly1305, X25519};
+use wherever_crypto::noise_protocol::{U8Array, DH};
+use wherever_crypto::noise_rust_crypto::X25519;
 
 #[wasm_bindgen]
 extern "C" {
@@ -22,12 +35,6 @@ macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
-pub struct JSState {
-    key: Key,
-    handshake: HandshakeState<X25519, ChaCha20Poly1305, Blake2b>,
-    tofu: Tofu,
-}
-
 #[wasm_bindgen(start)]
 pub fn start() {
     wasm_bindgen_futures::spawn_local(main())
@@ -36,7 +43,22 @@ pub fn start() {
 async fn main() {
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
-    let mut state = new_state();
+    let storage = window.local_storage().unwrap().unwrap();
+    let key = load_key(&storage);
+    setup_sender(
+        window.clone(),
+        document.clone(),
+        storage.clone(),
+        key.clone(),
+    )
+    .await;
+    receiver(window, document, storage, key.clone()).await
+}
+async fn receiver(window: Window, document: Document, storage: web_sys::Storage, key: Key) {
+    let mut tofu = Tofu::load(LocalStorage(storage, "tofu".into()));
+    let tofu_list = Rc::new(TofuList::new(&document, "tofu_list", "tofu_list_template"));
+    let accepted = Rc::new(RefCell::new(Vec::<UntrustedEntry>::new()));
+    let discovered = Rc::new(RefCell::new(Vec::<Pubkey>::new()));
 
     let qr = qr_code();
     let qr_element = document.get_element_by_id("qrcode").unwrap();
@@ -50,22 +72,203 @@ async fn main() {
         _ => "wss://",
     };
     let host = location.host().unwrap();
+    let discover_url = format!("{}{}/discover", protocol, host);
+    let discover_button: web_sys::HtmlElement = document
+        .get_element_by_id("discover")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    {
+        let discover_url = discover_url.clone();
+        let document = document.clone();
+        let discovered = discovered.clone();
+        let k2 = key.clone();
+        let a = Box::new(move |_e: JsValue| {
+            let k3 = k2.clone();
+            let url = discover_url.clone();
+            let document = document.clone();
+            let discovered = discovered.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some((phrase, f)) = initiate_discovery::<WebSocket, _>(k3, url).await {
+                    let discover_text: web_sys::HtmlElement = document
+                        .get_element_by_id("discover_phrase")
+                        .unwrap()
+                        .dyn_into()
+                        .unwrap();
+                    discover_text.set_inner_html(&phrase);
+                    let key = f.await.unwrap();
+                    discover_text.set_inner_html(&"");
+                    discovered.borrow_mut().push(key);
+                }
+            });
+        }) as Box<dyn FnMut(_)>;
+        discover_button.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
+    }
 
-    let mut socket = WebSocket::new(&format!("{}{}/stream", protocol, host))
+    let socket = WebSocket::new(&format!("{}{}/stream", protocol, host))
         .await
         .unwrap();
+    let mut stream = relay_reciever(socket, key.clone()).await.unwrap();
 
-    socket.send(Message::binary(state.first_message())).unwrap();
+    while let Some(msg) = stream.next().await {
+        for e in accepted.borrow_mut().drain(..) {
+            e.trust(&mut tofu);
+        }
+        for key in discovered.borrow_mut().drain(..) {
+            tofu.trust(key);
+        }
+        tofu.save().unwrap();
+        if let Some(msg) = match tofu.decrypt_message(&key, &msg) {
+            Ok(TofuEntry::Untrusted(entry)) => {
+                let entry = Rc::new(std::cell::RefCell::new(Some(entry)));
+                tofu_list.add(
+                    entry.borrow().as_ref().unwrap(),
+                    {
+                        let entry = entry.clone();
+                        let tofu_list = tofu_list.clone();
+                        let accepted = accepted.clone();
+                        let window = window.clone();
+                        move || {
+                            if let Some(entry) = entry.take() {
+                                tofu_list.remove(&entry);
+                                window
+                                    .open_with_url_and_target_and_features(
+                                        entry.peek(),
+                                        "_blank",
+                                        "noreferrer,noopener",
+                                    )
+                                    .unwrap();
+                                accepted.borrow_mut().push(entry);
+                            }
+                            // handle success
+                        }
+                    },
+                    {
+                        let entry = entry.clone();
+                        let tofu_list = tofu_list.clone();
+                        move || {
+                            if let Some(entry) = entry.take() {
+                                tofu_list.remove(&entry);
+                            }
+                            // handle failure
+                        }
+                    },
+                );
+                None
+                //prompt_async(channel.clone(), entry).await.unwrap_or(None)
+            }
+            Ok(TofuEntry::Trusted(msg)) => Some(msg),
+            Err(()) => None,
+        } {
+            window
+                .open_with_url_and_target_and_features(&msg, "_blank", "noreferrer,noopener")
+                .unwrap();
+        }
+    }
+}
 
-    let msg = socket.next().await.unwrap();
-    state.response(&msg.into_data());
-    socket.send(state.second_message().into());
+struct TofuList {
+    list_div: web_sys::HtmlElement,
+    template: web_sys::HtmlElement,
+}
 
-    let mut cipher = state.into_cipher();
-    loop {
-        let msg = socket.next().await.unwrap();
-        let decrypted = cipher.decrypt_message(&msg.into_data());
-        window.open_with_url_and_target_and_features(&decrypted, "_blank", "noreferrer,noopener");
+impl TofuList {
+    fn new(document: &web_sys::Document, list_div_id: &str, template_id: &str) -> Self {
+        let list_div: web_sys::HtmlElement = document
+            .get_element_by_id(list_div_id)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let template: web_sys::HtmlElement = document
+            .get_element_by_id(template_id)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let template = list_div
+            .remove_child(&template)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        Self { list_div, template }
+    }
+    fn add(
+        &self,
+        entry: &UntrustedEntry,
+        yes: impl FnOnce() + 'static,
+        no: impl FnOnce() + 'static,
+    ) {
+        let template: web_sys::HtmlElement = self
+            .template
+            .clone_node_with_deep(true)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let children = template.child_nodes();
+        let key = base64::encode(entry.key);
+        let mut yes = Some(yes);
+        let mut no = Some(no);
+        for elem in (0..children.length())
+            .into_iter()
+            .flat_map(|i| children.get(i)?.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            match elem.id().as_str() {
+                "yes" => {
+                    yes.take()
+                        .map(|yes| elem.set_onclick(Some(&Closure::once_into_js(yes).into())));
+                }
+                "no" => {
+                    no.take()
+                        .map(|no| elem.set_onclick(Some(&Closure::once_into_js(no).into())));
+                }
+                "key" => {
+                    elem.set_id(&key);
+                    elem.set_inner_html(&key);
+                }
+                _ => {}
+            }
+            // todo
+        }
+        template.set_id(&base64::encode(entry.key));
+        self.list_div.append_child(&template);
+    }
+    fn remove(&self, entry: &UntrustedEntry) {
+        let children = self.list_div.child_nodes();
+        let key = base64::encode(entry.key);
+        let elems: Vec<_> = (0..children.length())
+            .into_iter()
+            .flat_map(|i| children.get(i)?.dyn_into::<web_sys::HtmlElement>().ok())
+            .filter(|elem| elem.id().as_str() == &key)
+            .collect();
+        for elem in elems {
+            self.list_div.remove_child(&elem);
+        }
+    }
+}
+
+struct LocalStorage(web_sys::Storage, String);
+use std::io;
+use std::sync::atomic::AtomicU64;
+
+impl TofuStorage for LocalStorage {
+    fn save<I: Iterator<Item = String>>(&mut self, allowed: &mut I) -> io::Result<()> {
+        let out: String = allowed.collect();
+        self.0
+            .set_item(&self.1, &out)
+            .map_err(|_| io::ErrorKind::UnexpectedEof.into())
+    }
+    fn load<F: Fn(&str) -> Option<(Pubkey, AtomicU64)>>(
+        &mut self,
+        f: F,
+    ) -> io::Result<HashMap<Pubkey, AtomicU64>> {
+        Ok(self
+            .0
+            .get_item(&self.1)
+            .ok()
+            .flatten()
+            .ok_or(io::ErrorKind::UnexpectedEof)?
+            .lines()
+            .flat_map(|l| f(l))
+            .collect())
     }
 }
 
@@ -78,20 +281,11 @@ fn load_key(storage: &web_sys::Storage) -> Key {
     {
         key
     } else {
+        console_log!("MAKING NEW KEY");
         let key = X25519::genkey();
         storage.set_item("key", &base64::encode(&*key));
         key
     }
-}
-
-fn load_tofu(storage: &web_sys::Storage) -> Tofu {
-    storage
-        .get_item("tofu")
-        .unwrap()
-        .map(|s| Tofu::read(&s))
-        .unwrap_or(Tofu {
-            allowed: HashMap::new(),
-        })
 }
 
 pub fn qr_code() -> String {
@@ -109,111 +303,158 @@ pub fn qr_code() -> String {
     string
 }
 
-pub fn new_state() -> JSState {
-    let storage = web_sys::window().unwrap().local_storage().unwrap().unwrap();
-    let key = load_key(&storage);
-    let tofu = load_tofu(&storage);
-    let handshake = relay_client_handshake(key.clone());
-    JSState {
-        key,
-        handshake,
-        tofu,
-    }
-}
+async fn setup_sender(window: Window, document: Document, storage: web_sys::Storage, key: Key) {
+    let location = window.location();
+    let host = location.host().unwrap();
+    let ws_protocol = match &*location.protocol().unwrap() {
+        "http:" => "ws://",
+        _ => "wss://",
+    };
+    let discover_url = format!("{}{}/discover", ws_protocol, host);
 
-impl JSState {
-    pub fn first_message(&mut self) -> Vec<u8> {
-        self.handshake.write_message_vec(&[]).unwrap()
-    }
-    pub fn response(&mut self, msg: &[u8]) {
-        self.handshake.read_message_vec(msg).unwrap();
-    }
-    pub fn second_message(&mut self) -> Vec<u8> {
-        self.handshake.write_message_vec(&[]).unwrap()
-    }
-    pub fn into_cipher(self) -> JSCipher {
-        JSCipher {
-            key: self.key,
-            relay_cipher: self.handshake.get_ciphers().1,
-            tofu: self.tofu,
-        }
-    }
-}
+    let target_input: web_sys::HtmlInputElement = document
+        .get_element_by_id("send_target")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
 
-pub struct JSCipher {
-    key: Key,
-    relay_cipher: CipherState<ChaCha20Poly1305>,
-    tofu: Tofu,
-}
+    let target = storage
+        .get_item("target")
+        .ok()
+        .flatten()
+        .and_then(|x| base64::decode(x).ok())
+        .and_then(|x| x.try_into().ok());
+    if let Some(key) = target.as_ref() {
+        target_input.set_value(&base64::encode(key));
+    }
+    let send_target = Rc::new(Cell::new(target));
 
-struct Tofu {
-    allowed: HashMap<Pubkey, u64>,
-}
-
-impl Tofu {
-    fn read(buf: &str) -> Self {
-        Self {
-            allowed: buf
-                .lines()
-                .flat_map(|line| {
-                    let mut split = line.split(",");
-                    let rest = split.next()?;
-                    let seq: &str = split.next()?;
-                    Some((
-                        (&base64::decode(rest).ok()?[..]).try_into().ok()?,
-                        seq.parse().ok()?,
-                    ))
-                })
-                .collect(),
-        }
-    }
-    fn write(&self) -> String {
-        let mut out = String::new();
-        for (key, seq) in self.allowed.iter().map(|(k, seq)| (base64::encode(k), seq)) {
-            let s = format!("{},{}\n", key, seq);
-            out.push_str(&s);
-        }
-        out
-    }
-    fn save(&mut self) {
-        let storage = web_sys::window().unwrap().local_storage().unwrap().unwrap();
-        storage.set_item("tofu", &self.write());
-    }
-    fn validate_seq_not_tofu(&mut self, key: &Pubkey, seq: u64) -> bool {
-        match self.allowed.entry(*key) {
-            Entry::Occupied(mut o) => {
-                let last_seq = o.get_mut();
-                if *last_seq < seq {
-                    *last_seq = seq;
-                    true
-                } else {
-                    false
+    {
+        let discover_button: web_sys::HtmlElement = document
+            .get_element_by_id("discover_respond")
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let document = document.clone();
+        let storage = storage.clone();
+        let k2 = key.clone();
+        let send_target = send_target.clone();
+        let target_input = target_input.clone();
+        let a = Box::new(move |_e: JsValue| {
+            let send_target = send_target.clone();
+            let k3 = k2.clone();
+            let target_input = target_input.clone();
+            let url = discover_url.clone();
+            let document = document.clone();
+            let storage = storage.clone();
+            let phrase: web_sys::HtmlInputElement = document
+                .get_element_by_id("discover_input")
+                .unwrap()
+                .dyn_into()
+                .unwrap();
+            wasm_bindgen_futures::spawn_local(async move {
+                let phrase = phrase.value();
+                console_log!("phrase {}", &phrase);
+                if let Some((channel, phrase)) = wherever::parse_phrase(&phrase) {
+                    console_log!("phraseeee {}", &phrase);
+                    if let Some(key) = respond_discovery::<WebSocket, _>(
+                        k3,
+                        format!("{}/{}", url, channel),
+                        phrase,
+                    )
+                    .await
+                    {
+                        target_input.set_value(&base64::encode(key));
+                        set_target(&storage, &send_target, key);
+                    }
                 }
-            }
-            Entry::Vacant(v) => {
-                v.insert(seq);
-                true
-            }
-        }
+            });
+        }) as Box<dyn FnMut(_)>;
+        discover_button.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
+    }
+    {
+        let update_target: web_sys::HtmlElement = document
+            .get_element_by_id("send_update")
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let target_input = target_input.clone();
+        let storage = storage.clone();
+        let send_target = send_target.clone();
+        let a = Box::new(move |_e: JsValue| {
+            let send_target = send_target.clone();
+            let target_input = target_input.clone();
+            let storage = storage.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(key) = base64::decode(target_input.value())
+                    .ok()
+                    .and_then(|x| x.try_into().ok())
+                {
+                    set_target(&storage, &send_target, key);
+                }
+            });
+        }) as Box<dyn FnMut(_)>;
+        update_target.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
+    }
+    {
+        let send_button: web_sys::HtmlElement = document
+            .get_element_by_id("send")
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let document = document.clone();
+        let k2 = key.clone();
+        let a = Box::new(move |_e: JsValue| {
+            let send_target = send_target.clone();
+            let k3 = k2.clone();
+            let document = document.clone();
+            let window = window.clone();
+            let link: web_sys::HtmlInputElement = document
+                .get_element_by_id("send_input")
+                .unwrap()
+                .dyn_into()
+                .unwrap();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(server_key) = send_target.get() {
+                    send_link(&window, &link.value(), &k3, &server_key).await;
+                }
+            });
+        }) as Box<dyn FnMut(_)>;
+        send_button.set_onclick(Some(&Closure::wrap(a).into_js_value().into()));
     }
 }
 
-impl JSCipher {
-    pub fn decrypt_message(&mut self, msg: &[u8]) -> String {
-        let relay_dec = self.relay_cipher.decrypt_vec(msg);
-        let relay_dec = relay_dec.unwrap();
-        if let Ok((client_key, seq, dec_msg)) =
-            wherever_crypto::decrypt_client_message(&relay_dec, self.key.clone())
-        {
-            if self.tofu.validate_seq_not_tofu(&client_key, seq) {
-                self.tofu.save();
-                let s = String::from_utf8(dec_msg);
-                s.unwrap()
-            } else {
-                panic!("REEEE")
-            }
-        } else {
-            panic!()
-        }
-    }
+fn set_target(
+    storage: &web_sys::Storage,
+    send_target: &Rc<Cell<Option<Pubkey>>>,
+    new_target: Pubkey,
+) {
+    storage
+        .set_item("target", &base64::encode(new_target))
+        .unwrap();
+    send_target.set(Some(new_target));
+}
+
+async fn send_link(window: &web_sys::Window, link: &str, client_key: &Key, server_key: &Pubkey) {
+    let storage = window.local_storage().unwrap().unwrap();
+    let seq = storage
+        .get_item("seq")
+        .ok()
+        .flatten()
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(0);
+    let body =
+        wherever_crypto::encrypt_client_message(link, client_key.clone(), server_key.clone(), seq)
+            .unwrap();
+    storage.set_item("seq", &format!("{}", seq + 1)).unwrap();
+    wasm_bindgen_futures::JsFuture::from(
+        window.fetch_with_str_and_init(
+            "open",
+            web_sys::RequestInit::new()
+                .body(Some(&*js_sys::Uint8Array::from(&*body)))
+                .method("POST"),
+        ),
+    )
+    .await
+    .unwrap();
 }

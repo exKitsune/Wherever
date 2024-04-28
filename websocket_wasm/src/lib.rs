@@ -10,6 +10,7 @@ use js_sys::Promise;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
+#[derive(Debug)]
 pub enum Message {
     Text(String),
     Binary(Vec<u8>),
@@ -74,6 +75,7 @@ impl WebSocket {
             let msg = JsFuture::from(Promise::new(&mut |resolve, reject| {
                 ws.set_onmessage(Some(&resolve));
                 ws.set_onerror(Some(&reject));
+                ws.set_onclose(Some(&reject));
             }))
             .await
             .ok()?;
