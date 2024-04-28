@@ -40,7 +40,8 @@ public class QuickTileService extends TileService {
     private void updateTile() {
         Tile tile = getQsTile();
 
-        boolean enabled = SettingsActivity.getStatus();
+        SharedPreferences prefs = SettingsActivity.getSharedPreferences(QuickTileService.this.getApplicationContext());
+        boolean enabled = prefs.getBoolean("enabled", false);;
         @DrawableRes int icon = R.drawable.ic_tile;
         tile.setState(Tile.STATE_INACTIVE);
         if(enabled) {
