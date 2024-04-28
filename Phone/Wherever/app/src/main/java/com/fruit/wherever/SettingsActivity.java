@@ -1,6 +1,7 @@
 package com.fruit.wherever;
 
 import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -32,13 +33,20 @@ public class SettingsActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Intent intent = getIntent();
+        Log.e("BRUH", "intent aaaaa" + intent);
         SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
-        if(intent.getAction() == ACTION_APP_OPEN) {
-            String chosen_app = intent.getStringExtra(Intent.EXTRA_CHOSEN_COMPONENT);
+        if(intent.getAction().equals(ACTION_APP_OPEN)) {
+            Log.e("BRUH", "ACTION_APP_OPEN CALLBACK");
+            Log.e("BRUH", intent.toString());
+            ComponentName chosen_app = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
+            Log.e("BRUH", "app: " + chosen_app);
             String url = intent.getStringExtra("url");
+            Log.e("BRUH", "url: " + url);
+            finish();
             return;
         }
         if(intent.getAction() == Intent.ACTION_SEND || intent.getAction() == Intent.ACTION_VIEW) {
+            Log.e("BRUH", "ACTION_SEND or ACTION_VIEW");
             Uri uri;
             if(intent.getAction() == Intent.ACTION_SEND && intent.getType() != null) {
                 String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
@@ -47,7 +55,10 @@ public class SettingsActivity extends AppCompatActivity {
                 uri = intent.getData();
             }
 
-            if(uri.getScheme() == "where") {
+            Log.e("BRUH", "URI: " + uri.toString());
+            Log.e("BRUH", "URI scheme: \"" + uri.getScheme() + "\"");
+            if(uri.getScheme().equals("where")) {
+                Log.e("BRUH", "where:// uri");
                 String home_ip = uri.getHost();
                 int home_port = uri.getPort();
 
@@ -55,6 +66,8 @@ public class SettingsActivity extends AppCompatActivity {
                 editor.putString("ip", home_ip);
                 editor.putInt("port", home_port);
                 editor.apply();
+                finish();
+                return;
             } else { //if(uri.getScheme() == "http" || uri.getScheme() == "https") {
                 if (prefs.getBoolean("enabled", false)) {
                     String home_ip = prefs.getString("ip", "192.168.1.11");
@@ -63,10 +76,12 @@ public class SettingsActivity extends AppCompatActivity {
                     if (home_ip == "") {
                         return;
                     }
+                    Log.e("BRUH", "ip: " + home_ip + ", port: " + home_port);
                     Runnable r = new Runnable() {
                         @Override
                         public void run() {
                             try {
+                                Log.e("BRUH", "I'm gonna send the response");
                                 URL url = new URL("http://" + home_ip + ":" + home_port + "/open");
                                 HttpURLConnection con = (HttpURLConnection) url.openConnection();
                                 con.setDoOutput(true);
@@ -76,7 +91,7 @@ public class SettingsActivity extends AppCompatActivity {
                                     byte[] input = uri.toString().getBytes("utf-8");
                                     os.write(input, 0, input.length);
                                 }
-                                con.getResponseCode();
+                                Log.e("BRUH", "HTTP Response: " + con.getResponseCode());
                             } catch (Exception e) {
                                 Log.e("BRUH", e.toString());
                             }
@@ -86,17 +101,13 @@ public class SettingsActivity extends AppCompatActivity {
                 } else {
                     if(intent.getAction() != Intent.ACTION_SEND) {
                         Intent sendIntent = new Intent();
-                        sendIntent.setAction(Intent.ACTION_SEND);
-                        sendIntent.putExtra(Intent.EXTRA_TEXT, intent.getData().toString());
-                        sendIntent.setType("text/plain");
-                        sendIntent.putExtra(Intent.EXTRA_SUBJECT, "Sharing URL");
+                        sendIntent.fillIn(intent, 0);
 
                         Intent receiver = new Intent(this, SettingsActivity.class)
                                 .putExtra("url", intent.getData().toString()).setAction(ACTION_APP_OPEN);
-                        PendingIntent pendingIntent = PendingIntent.getBroadcast(this, 0, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
-                        Intent chooser = Intent.createChooser(intent, "Share URL", pendingIntent.getIntentSender());
+                        PendingIntent pendingIntent = PendingIntent.getActivity(this, 1, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
+                        Intent chooser = Intent.createChooser(sendIntent, "OwO What app would you like to select neko nya~~?", pendingIntent.getIntentSender());
                         startActivity(chooser);
-                        //startActivity(Intent.createChooser(sendIntent, "Share URL"));
                     }
                 }
                 finish();
@@ -104,6 +115,7 @@ public class SettingsActivity extends AppCompatActivity {
                 return;
             }
         } else {
+            Log.e("BRUH", "bruh settings");
             setContentView(R.layout.settings_activity);
             ActionBar actionBar = getSupportActionBar();
             if (actionBar != null) {
