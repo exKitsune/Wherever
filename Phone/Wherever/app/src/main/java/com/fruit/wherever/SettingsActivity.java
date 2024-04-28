@@ -152,15 +152,16 @@ public class SettingsActivity extends AppCompatActivity {
                 Log.e("BRUH", "where://" + uri);
                 String home_ip = uri.getHost();
                 int home_port = uri.getPort();
-                String server_pub_key = uri.getFragment();
-                String client_key = new String(WhereverCrypto.genKey(), StandardCharsets.UTF_8);;
+                String server_pub_key_b64 = uri.getFragment();
 
                 SharedPreferences.Editor editor = prefs.edit();
                 editor.putString("ip", home_ip);
                 editor.putInt("port", home_port);
-                editor.putString("server_pub_key", server_pub_key);
+                editor.putString("server_pub_key", server_pub_key_b64);
                 if(prefs.getString("client_key", "null").equals("null")) {
-                    editor.putString("client_key", client_key);
+                    byte[] generated_key = WhereverCrypto.genKey();
+                    String generated_key_b64 = Base64.getEncoder().encodeToString(generated_key);
+                    editor.putString("client_key", generated_key_b64);
                 }
                 editor.apply();
                 finish();
@@ -175,9 +176,19 @@ public class SettingsActivity extends AppCompatActivity {
                     }
                     Log.e("BRUH", "ip: " + home_ip + ", port: " + home_port);
                     //Encrypt our message
-                    byte[] server_pub_key_b64 = prefs.getString("server_pub_key", "0000").getBytes();
+                    String server_pub_key_b64 = prefs.getString("server_pub_key", "null");
+                    if(server_pub_key_b64.equals("null")) {
+                        Toast.makeText(getApplicationContext(), "Wherever Server Public Key Error\nTurning OFF", Toast.LENGTH_LONG).show();
+
+                        SharedPreferences.Editor editor = prefs.edit();
+                        editor.putBoolean("enabled", false);
+                        editor.apply();
+                        finish();
+                        return;
+                    }
                     byte[] server_pub_key = Base64.getDecoder().decode(server_pub_key_b64);
-                    byte[] client_key = prefs.getString("client_key", "null").getBytes();
+                    String client_key_b64 = prefs.getString("client_key", "null");
+                    byte[] client_key = Base64.getDecoder().decode(client_key_b64);
                     byte[] encrypted_msg = WhereverCrypto.encMsg(uri.toString(), client_key, server_pub_key);
 
                     final byte[] input = encrypted_msg;
