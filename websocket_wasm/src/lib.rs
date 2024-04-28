@@ -70,7 +70,7 @@ impl WebSocket {
             inner.set_onerror(Some(&reject));
         }))
         .await
-        .unwrap();
+        .map_err(|_| ())?;
         let stream = Box::pin(unfold(inner.clone(), |ws| async {
             let msg = JsFuture::from(Promise::new(&mut |resolve, reject| {
                 ws.set_onmessage(Some(&resolve));

@@ -22,3 +22,5 @@ qrcode = "0.12"
 websocket_wasm = { path = "../websocket_wasm" }
 wasm-bindgen-futures = "0.4.20"
 futures = "0.3"
+anyhow = "1"
+console_error_panic_hook = "^0.1.6"

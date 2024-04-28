@@ -5,6 +5,10 @@
             Wherever Receiver
         </title>
         <link rel="stylesheet" href="https://unpkg.com/98.css" />
+        <style type="text/css">
+            body { background-color: #01817f; }
+            body > .window { margin: 15 1%; }
+        </style>
     </head>
     <body>
         <div class="window">
@@ -15,7 +19,8 @@
             </div>
             <div class="window-body">
                 <p id="result"></p>
-                <div class="window" id="qrcode"></div>
+                <div class="window" style="width: max-content" id="qrcode"></div>
+                <p>
                 <button id="discover">Discover</button>
                 <div>
                     Tofu List:
@@ -27,7 +32,9 @@
                         </div>
                     </div>
                 </div>
-                <div id="discover_phrase"></div>
+                <div>Discovery Phrase: 
+                    <div id="discover_phrase"></div>
+                </div>
             </div>
         </div>
         <div class="window">
@@ -37,13 +44,28 @@
                 </div>
             </div>
             <div class="window-body">
-                <button id="send">Send</button>
-                <input id="send_input" type="text">
-                <button id="discover_respond">Discover Respond</button>
-                <input id="discover_input" type="text">
+                <form onSubmit="return false;">
+                    <input id="send_input" type="text">
+                    <button type="submit" id="send">Send</button>
+                </form>
+                <form onSubmit="return false;">
+                    <input id="discover_input" type="text">
+                    <button type="submit" id="discover_respond">Discover Respond</button>
+                </form>
                 Current target:
-                <input id="send_target" type="text"></input>
+                <input id="send_target" type="text">
                 <button id="send_update">Update Target</button>
+            </div>
+        </div>
+        <div class="window">
+            <div class="title-bar">
+                <div class="title-bar-text">
+                    Wherever Settings
+                </div>
+            </div>
+            <div class="window-body">
+                <button id="reset_key">Reset receiver key</button>
+                <button id="reset_tofu">Reset trusted peers</button>
             </div>
         </div>
             <script src="wherever_web.js" type="module"></script>

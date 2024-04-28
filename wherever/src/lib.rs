@@ -1,19 +1,18 @@
 use std::collections::{hash_map::Entry, HashMap};
 use std::convert::TryInto;
+use std::fs::File;
 use std::future::Future;
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::Path;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use futures::lock::Mutex;
-use futures::pin_mut;
 use futures::stream::{Stream, StreamExt};
-use futures::FutureExt;
-use futures::SinkExt;
 
 use rand::seq::SliceRandom;
 
 use wherever_crypto::{relay_client_handshake, DiscoveryProtocol, Key, Pubkey};
 
-use wherever_crypto::noise_protocol::{U8Array, DH};
 use wherever_crypto::noise_rust_crypto::X25519;
 
 use wordlist::EFF_SHORT_2;
@@ -98,7 +97,7 @@ impl WebSocket for tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
         &'b mut self,
         msg: Self::Message,
     ) -> Pin<Box<dyn Future<Output = Result<(), Self::Error>> + 'b + Send>> {
-        Box::pin(SinkExt::send(self, msg))
+        Box::pin(futures::SinkExt::send(self, msg))
     }
     fn item_to_message(i: Self::StreamItem) -> Option<Self::Message> {
         i.ok()
@@ -126,6 +125,7 @@ where
     type ConnectFuture =
         Pin<Box<dyn Future<Output = Result<Self, Self::Error>> + Send + Sync + 'b>>;
     fn connect(url: Url) -> Self::ConnectFuture {
+        use futures::FutureExt;
         Box::pin(tokio_tungstenite::connect_async(url).map(|x| x.map(|x| x.0)))
     }
 }
@@ -167,7 +167,7 @@ pub async fn relay_reciever<WS: WebSocket>(
     )
 }
 
-async fn handle_client_handshake<'a, WS>(
+pub async fn handle_client_handshake<'a, WS>(
     ws: &'a mut WS,
 ) -> Option<
     wherever_crypto::noise_protocol::HandshakeState<
@@ -256,11 +256,6 @@ pub struct Tofu<S> {
     storage: S,
     allowed: HashMap<Pubkey, AtomicU64>,
 }
-
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 pub trait TofuStorage {
     fn save<I: Iterator<Item = String>>(&mut self, allowed: &mut I) -> io::Result<()>;
