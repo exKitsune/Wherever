@@ -780,8 +780,6 @@ dependencies = [
 [[package]]
 name = "noise-protocol"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ecc9fd83ab18487621c3cd1b7185721ed2f0cdeb4a35c6b4d44f87988a6ff24"
 dependencies = [
  "arrayvec",
 ]
@@ -789,8 +787,6 @@ dependencies = [
 [[package]]
 name = "noise-rust-crypto"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ceb2ceadc3e9cfaef7f39aff534f558b510c55be9e7612afee8d67e04382309c"
 dependencies = [
  "blake2",
  "chacha20poly1305",
@@ -1827,6 +1823,7 @@ name = "wherever_crypto"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "byteorder",
  "noise-protocol",
  "noise-rust-crypto",
 ]

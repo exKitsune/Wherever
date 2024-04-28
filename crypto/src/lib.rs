@@ -1,5 +1,7 @@
 use std::convert::TryInto;
 
+use byteorder::{ByteOrder, NetworkEndian, WriteBytesExt};
+
 use noise_protocol::patterns::{noise_x, noise_xn};
 use noise_protocol::HandshakeStateBuilder;
 pub use noise_protocol::{HandshakeState, U8Array, DH};
@@ -12,7 +14,11 @@ pub fn encrypt_client_message(
     msg: &str,
     client_key: Key,
     server_key: Pubkey,
+    seq_num: u64,
 ) -> Result<Vec<u8>, noise_protocol::Error> {
+    let mut msg_seq = vec![];
+    msg_seq.write_u64::<NetworkEndian>(seq_num).unwrap();
+    msg_seq.extend_from_slice(msg.as_bytes());
     //let mut handshake = make_handshake(true, server_key);
     let mut handshake = HandshakeStateBuilder::new();
     handshake
@@ -25,7 +31,7 @@ pub fn encrypt_client_message(
         handshake.build_handshake_state();
     let mut msg_out = vec![];
     msg_out.extend(&server_key);
-    let mut msg_crypt = handshake.write_message_vec(msg.as_bytes())?;
+    let mut msg_crypt = handshake.write_message_vec(&msg_seq)?;
     msg_out.append(&mut msg_crypt);
     Ok(msg_out)
 }
@@ -33,7 +39,7 @@ pub fn encrypt_client_message(
 pub fn decrypt_client_message(
     msg: &[u8],
     server_key: Key,
-) -> Result<(Pubkey, Vec<u8>), noise_protocol::ErrorKind> {
+) -> Result<(Pubkey, u64, Vec<u8>), noise_protocol::ErrorKind> {
     if 32 > msg.len() {
         return Err(noise_protocol::ErrorKind::TooShort);
     }
@@ -49,9 +55,11 @@ pub fn decrypt_client_message(
     let mut handshake: HandshakeState<X25519, ChaCha20Poly1305, Blake2b> =
         handshake.build_handshake_state();
 
-    let ret = handshake.read_message_vec(msg).map_err(|e| e.kind())?;
+    let mut ret = handshake.read_message_vec(msg).map_err(|e| e.kind())?;
+    let seq = NetworkEndian::read_u64(&ret);
+    let ret = ret.split_off(8);
     let client_key = handshake.get_rs().unwrap();
-    Ok((client_key, ret))
+    Ok((client_key, seq, ret))
 }
 
 pub fn get_destination(msg: &[u8]) -> Option<Pubkey> {

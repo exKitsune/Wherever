@@ -1,9 +1,9 @@
 use std::convert::TryInto;
 use std::io;
 
-use noise_protocol::DH;
-use noise_rust_crypto::X25519;
-use server::{encrypt_client_message, Pubkey};
+use wherever_crypto::DH;
+use wherever_crypto::X25519;
+use wherever_crypto::{encrypt_client_message, Pubkey};
 
 fn main() -> io::Result<()> {
     let server_key = base64::decode(std::env::args().skip(1).next().unwrap()).unwrap();
@@ -15,6 +15,7 @@ fn main() -> io::Result<()> {
         "https://www.youtube.com/watch?v=mZ0sJQC8qkE",
         client_static_key,
         server_key,
+        42,
     )
     .unwrap();
     let addr = std::env::args()
