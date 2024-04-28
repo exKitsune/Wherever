@@ -41,10 +41,9 @@ public class QuickTileService extends TileService {
         Tile tile = getQsTile();
 
         boolean enabled = SettingsActivity.getStatus();
-        @DrawableRes int icon = R.drawable.ic_tile_off;
+        @DrawableRes int icon = R.drawable.ic_tile;
         tile.setState(Tile.STATE_INACTIVE);
         if(enabled) {
-            icon = R.drawable.ic_tile_on;
             tile.setState(Tile.STATE_ACTIVE);
         }
         tile.setIcon(Icon.createWithResource(getApplicationContext(), icon));

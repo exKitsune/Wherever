@@ -70,7 +70,7 @@
         </activity>
         <service
             android:name=".QuickTileService"
-            android:icon="@drawable/ic_tile_off"
+            android:icon="@drawable/ic_tile"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
 
             <intent-filter>
