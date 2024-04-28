@@ -187,13 +187,11 @@ async fn relay(addr: SocketAddr) {
     let discover = Arc::new(RwLock::new(DiscoveryTable::new(100)));
     let routes = warp::path("stream")
         .and(warp::ws())
-        .and(warp::filters::addr::remote())
         .map({
             let registry = registry.clone();
-            move |ws: warp::ws::Ws, addr| {
-                println!("Connection from {:?}", addr);
+            move |ws: warp::ws::Ws| {
                 let registry = registry.clone();
-                ws.on_upgrade(move |websocket| handle_client(websocket, registry, addr))
+                ws.on_upgrade(move |websocket| handle_client(websocket, registry))
             }
         })
         .or(warp::path("discover")
@@ -216,7 +214,6 @@ async fn relay(addr: SocketAddr) {
                 let registry = registry.clone();
                 async move {
                     if let Some(key) = wherever_crypto::get_destination(&body) {
-                        println!("KEY: {:?}", base64::encode(key));
                         if let Some(channel) = registry.read().await.get(&key) {
                             if let Ok(()) = channel.send(Message(body.to_vec())).await {
                                 return Ok::<_, warp::Rejection>("Good");
@@ -243,12 +240,8 @@ async fn handle_client_handshake(
     Some(handshake)
 }
 
-async fn handle_client(
-    mut ws: WebSocket,
-    state: Arc<RwLock<Registry>>,
-    remote: Option<SocketAddr>,
-) {
-    println!("Client connected {:?}", remote);
+async fn handle_client(mut ws: WebSocket, state: Arc<RwLock<Registry>>) {
+    println!("Client connected");
     // get public key of client
     if let Some((key, mut cipher)) = handle_client_handshake(&mut ws)
         .await
@@ -284,7 +277,7 @@ async fn handle_client(
         // on close unregister key
         state.write().await.remove(&key);
     }
-    println!("Client disconnected {:?}", remote);
+    println!("Client disconnected");
     let _ = ws.close().await;
 }
 
@@ -373,7 +366,6 @@ async fn discover_client(
 }
 
 async fn serve_web_client(path: warp::path::FullPath) -> Result<impl warp::Reply, warp::Rejection> {
-    println!("ahoy {:?}", path);
     match path.as_str() {
         "/" | "/index.html" => Ok(warp::reply::with_header(
             wherever_web_compiled::HTML,

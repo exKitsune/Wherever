@@ -373,11 +373,9 @@ impl<S> Tofu<S> {
             Entry::Occupied(mut o) => {
                 let last_seq = o.get_mut().get_mut();
                 if *last_seq < seq {
-                    println!("Seq good {} < {}", last_seq, seq);
                     *last_seq = seq;
                     true
                 } else {
-                    println!("Seq BAD  {} > {}", last_seq, seq);
                     false
                 }
             }
