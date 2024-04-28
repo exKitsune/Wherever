@@ -3,9 +3,10 @@ package com.fruit.wherever;
 import android.content.Context;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.provider.ContactsContract;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
-
+    private static DatabaseHelper instance = null;
     // Table Name
     public static final String TABLE_NAME = "USERPREF";
 

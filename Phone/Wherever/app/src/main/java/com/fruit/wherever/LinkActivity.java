@@ -1,8 +1,10 @@
 package com.fruit.wherever;
 
+import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -40,6 +42,7 @@ public class LinkActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        DBManager.getInstance(getApplicationContext()).open();
         Log.e("BRUH", "bruh links");
 
         Intent intent = getIntent();
@@ -88,21 +91,38 @@ public class LinkActivity extends AppCompatActivity {
             Log.e("BRUH", "URI scheme: \"" + uri.getScheme() + "\"");
             Log.e("BRUH", "URI host: \"" + uri.getHost() + "\"");
             if(uri.getScheme().equals("where")) {
-                Log.e("BRUH", "where://" + uri);
+                Log.e("BRUH", "where = " + uri);
                 String home_ip = uri.getHost();
                 int home_port = uri.getPort();
                 String server_pub_key_b64 = uri.getFragment();
 
-                editor.putString("ip", home_ip);
-                editor.putInt("port", home_port);
-                editor.putString("server_pub_key", server_pub_key_b64);
-                if(prefs.getString("client_key", "null").equals("null")) {
-                    byte[] generated_key = WhereverCrypto.genKey();
-                    String generated_key_b64 = Base64.getEncoder().encodeToString(generated_key);
-                    editor.putString("client_key", generated_key_b64);
-                    editor.putLong("seq", 0);
-                }
-                editor.apply();
+                new AlertDialog.Builder(LinkActivity.this)
+                        .setTitle("Change Server Info?")
+                        .setMessage("New Info:\nIP: " + home_ip + ":" + home_port + "\nServer Key: " + server_pub_key_b64)
+                        .setIcon(android.R.drawable.ic_dialog_info)
+                        .setNegativeButton(android.R.string.no, new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface dialog, int whichButton) {
+                                finish();
+                            }
+                        })
+                        .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface dialog, int whichButton) {
+                                editor.putString("ip", home_ip);
+                                editor.putInt("port", home_port);
+                                editor.putString("server_pub_key", server_pub_key_b64);
+                                if(prefs.getString("client_key", "null").equals("null")) {
+                                    byte[] generated_key = WhereverCrypto.genKey();
+                                    String generated_key_b64 = Base64.getEncoder().encodeToString(generated_key);
+                                    editor.putString("client_key", generated_key_b64);
+                                    editor.putLong("seq", 0);
+                                }
+                                editor.apply();
+
+                                //LinkActivity.this.recreate();
+                                Toast.makeText(LinkActivity.this, "Server Info Changed", Toast.LENGTH_SHORT).show();
+                                finish();
+                            }}).show();
+
             } else { //if(uri.getScheme() == "http" || uri.getScheme() == "https") {
                 if (prefs.getBoolean("enabled", false)) {
                     String home_ip = prefs.getString("ip", "127.0.0.1");
@@ -273,9 +293,15 @@ public class LinkActivity extends AppCompatActivity {
                         }
                     }
                 }
+                finish();
             }
         }
-        finish();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        DBManager.getInstance(getApplicationContext()).close();
     }
 
     //Adapted from https://gist.github.com/mediavrog/5625602

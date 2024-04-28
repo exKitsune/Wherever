@@ -36,7 +36,9 @@ public class ModifyRecord extends Activity implements View.OnClickListener {
                 break;
             case R.id.delete_btn:
                 String host = modTextView.getText().toString();
+                DBManager.getInstance(getApplicationContext()).open();
                 DBManager.getInstance(getApplicationContext()).delete(host);
+                DBManager.getInstance(getApplicationContext()).close();
                 this.returnHome();
                 break;
         }
