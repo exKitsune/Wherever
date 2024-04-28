@@ -162,7 +162,7 @@ public class SettingsActivity extends AppCompatActivity {
                             Log.e("bRUh", "1 "+intent.getComponent());
 
                             sendIntent.fillIn(intent, 0);
-                            sendIntent.addFlags(Intent.FLAG_ACTIVITY_REQUIRE_NON_BROWSER | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_FORWARD_RESULT);
+                            sendIntent.addFlags(Intent.FLAG_ACTIVITY_REQUIRE_NON_BROWSER | Intent.FLAG_ACTIVITY_FORWARD_RESULT);
                             Intent receiver = new Intent(this, SettingsActivity.class)
                                     .putExtra("url", intent.getData().toString()).setAction(ACTION_APP_OPEN);
                             PendingIntent pendingIntent = PendingIntent.getActivity(this, 1, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
@@ -208,7 +208,7 @@ public class SettingsActivity extends AppCompatActivity {
                         } else {
                             Intent finalIntent = new Intent();
                             finalIntent.fillIn(intent, 0);
-                            finalIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_FORWARD_RESULT);
+                            finalIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
                             finalIntent.setComponent(ComponentName.unflattenFromString(component));
                             startActivity(finalIntent);
                         }
