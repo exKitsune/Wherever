@@ -48,6 +48,7 @@ import java.io.OutputStream;
 import java.lang.reflect.Array;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -58,6 +59,7 @@ import java.util.HashMap;
 import java.util.List;
 
 import static android.app.NotificationChannel.DEFAULT_CHANNEL_ID;
+import java.util.Base64;
 
 
 public class SettingsActivity extends AppCompatActivity {
@@ -72,6 +74,7 @@ public class SettingsActivity extends AppCompatActivity {
 
     static Activity c;
 
+    //used to get status to indicate on quick settings bar
     public static boolean getStatus() {
         SharedPreferences prefs = c.getPreferences(Context.MODE_PRIVATE);
         return prefs.getBoolean("enabled", false);
@@ -81,6 +84,7 @@ public class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        //Log.e("crypto", Arrays.toString(WhereverCrypto.genKey()));
         c = this;
         Intent intent = getIntent();
         Log.e("BRUH", "intent aaaaa" + intent);
@@ -95,6 +99,8 @@ public class SettingsActivity extends AppCompatActivity {
             String url = intent.getStringExtra("url");
             Log.e("BRUH", "url: " + url);
 
+            //make sure we aren't recursively calling our app on accident
+            //we put host, component, last accessed time in
             if(!chosen_app.flattenToString().equals("com.fruit.wherever/com.fruit.wherever.SettingsActivity")) {
                 Uri uri = Uri.parse(url);
                 String host = uri.getHost();
@@ -106,6 +112,7 @@ public class SettingsActivity extends AppCompatActivity {
             finish();
             return;
         }
+        //callback when choosing a default browser
         if(intent.getAction() != null && intent.getAction().equals(ACTION_DEFAULT_SET)) {
             Log.e("BRUH", "ACTION_DEFAULT_SET CALLBACK");
             ComponentName chosen_app = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
@@ -118,6 +125,7 @@ public class SettingsActivity extends AppCompatActivity {
             finish();
             return;
         }
+        //called when clicking quick setting app, switches app on or off
         if(intent.getAction() != null && intent.getAction().equals(ACTION_TURN_ON)) {
             SharedPreferences.Editor editor = prefs.edit();
             Log.e("enabling", "" + !prefs.getBoolean("enabled", false));
@@ -126,6 +134,7 @@ public class SettingsActivity extends AppCompatActivity {
             finish();
             return;
         }
+        //primary portion of the app
         if(intent.getAction() != null && intent.getAction() == Intent.ACTION_SEND || intent.getAction() == Intent.ACTION_VIEW) {
             Log.e("BRUH", "ACTION_SEND or ACTION_VIEW");
             Uri uri;
@@ -140,13 +149,19 @@ public class SettingsActivity extends AppCompatActivity {
             Log.e("BRUH", "URI scheme: \"" + uri.getScheme() + "\"");
             Log.e("BRUH", "URI host: \"" + uri.getHost() + "\"");
             if(uri.getScheme().equals("where")) {
-                Log.e("BRUH", "where:// uri");
+                Log.e("BRUH", "where://" + uri);
                 String home_ip = uri.getHost();
                 int home_port = uri.getPort();
+                String server_pub_key = uri.getFragment();
+                String client_key = new String(WhereverCrypto.genKey(), StandardCharsets.UTF_8);;
 
                 SharedPreferences.Editor editor = prefs.edit();
                 editor.putString("ip", home_ip);
                 editor.putInt("port", home_port);
+                editor.putString("server_pub_key", server_pub_key);
+                if(prefs.getString("client_key", "null").equals("null")) {
+                    editor.putString("client_key", client_key);
+                }
                 editor.apply();
                 finish();
                 return;
@@ -159,7 +174,15 @@ public class SettingsActivity extends AppCompatActivity {
                         return;
                     }
                     Log.e("BRUH", "ip: " + home_ip + ", port: " + home_port);
+                    //Encrypt our message
+                    byte[] server_pub_key_b64 = prefs.getString("server_pub_key", "0000").getBytes();
+                    byte[] server_pub_key = Base64.getDecoder().decode(server_pub_key_b64);
+                    byte[] client_key = prefs.getString("client_key", "null").getBytes();
+                    byte[] encrypted_msg = WhereverCrypto.encMsg(uri.toString(), client_key, server_pub_key);
 
+                    final byte[] input = encrypted_msg;
+
+                    //create async thread to send packets to server
                     Runnable r = new Runnable() {
                         @Override
                         public void run() {
@@ -173,7 +196,6 @@ public class SettingsActivity extends AppCompatActivity {
                                 con.setRequestProperty("Content-Type", "text/plain; utf-8");
                                 con.setConnectTimeout(5000);
                                 try (OutputStream os = con.getOutputStream()) {
-                                    byte[] input = uri.toString().getBytes("utf-8");
                                     os.write(input, 0, input.length);
                                 }
                                 int rc = con.getResponseCode();
@@ -186,24 +208,27 @@ public class SettingsActivity extends AppCompatActivity {
                                 good = false;
                             }
 
-                            if(!good) {
-                                Thread thread = new Thread() {
-                                    public void run() {
-                                        runOnUiThread(new Runnable() {
-                                            public void run() {
-                                                int duration = Toast.LENGTH_LONG;
-                                                Toast toast = Toast.makeText(getApplicationContext(), "Wherever Server Connection Unstable\nTurning OFF", duration);
-                                                toast.show();
+                            //send toast in main thread to notify user of success
+                            // or failure, in which case turn app off
+                            final boolean f_good = good;
+                            Thread thread = new Thread() {
+                                public void run() {
+                                    runOnUiThread(new Runnable() {
+                                        public void run() {
+                                            if(!f_good) {
+                                                Toast.makeText(getApplicationContext(), "Wherever Server Connection Unstable\nTurning OFF", Toast.LENGTH_LONG).show();
 
                                                 SharedPreferences.Editor editor = prefs.edit();
                                                 editor.putBoolean("enabled", false);
                                                 editor.apply();
+                                            } else {
+                                                Toast.makeText(getApplicationContext(), "Link Sent", Toast.LENGTH_SHORT).show();
                                             }
-                                        });
-                                    }
-                                };
-                                thread.start();
-                            }
+                                        }
+                                    });
+                                }
+                            };
+                            thread.start();
                         }
                     };
                     new Thread(r).start();
@@ -233,11 +258,12 @@ public class SettingsActivity extends AppCompatActivity {
                             Log.e("bRUh", "1 "+intent.getComponent());
 
                             sendIntent.fillIn(intent, 0);
+                            //Intent.FLAG_ACTIVITY_FORWARD_RESULT is needed to forward the intention such as open in custom tab
                             sendIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
+                            //store url in an extra so during callback we can know url/host + component clicked
                             Intent receiver = new Intent(this, SettingsActivity.class)
                                     .putExtra("url", intent.getData().toString()).setAction(ACTION_APP_OPEN);
                             PendingIntent pendingIntent = PendingIntent.getActivity(this, 1, receiver, PendingIntent.FLAG_UPDATE_CURRENT);
-                            //Intent chooser = Intent.createChooser(sendIntent, "OwO What app would you like to select neko nya~~?", pendingIntent.getIntentSender());
 
                             List<String> blacklist = new ArrayList<String>();
                             blacklist.add("com.fruit.wherever");
@@ -290,6 +316,7 @@ public class SettingsActivity extends AppCompatActivity {
                             }
 
                         } else {
+                            //If a component was found for that specific host, simply launch it and update db with last accessed time
                             Intent finalIntent = new Intent();
                             finalIntent.fillIn(intent, 0);
                             finalIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
@@ -305,6 +332,8 @@ public class SettingsActivity extends AppCompatActivity {
                 return;
             }
         } else {
+            //if app is called from launcher and not through a link intent
+            //create visible window
             Log.e("BRUH", "bruh settings");
             setContentView(R.layout.settings_activity);
             ActionBar actionBar = getSupportActionBar();
@@ -314,6 +343,8 @@ public class SettingsActivity extends AppCompatActivity {
 
             boolean enabled = prefs.getBoolean("enabled", false);
 
+            //last accessed time in db is important here, we sort the entries in the db by last accessed
+            // this makes it easier to remove entries in case you misclick
             ListView listView = (ListView) findViewById(R.id.listView);
             dbManager.open();
             Cursor cursor = dbManager.fetchAll();
@@ -364,6 +395,7 @@ public class SettingsActivity extends AppCompatActivity {
                 @RequiresApi(api = Build.VERSION_CODES.O)
                 @Override
                 public void onClick(View v) {
+                    //we open a random link just to make the chooser appear so we can callback and set default browser
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"));
                     Intent sendIntent = new Intent();
                     sendIntent.fillIn(intent, 0);
@@ -373,6 +405,7 @@ public class SettingsActivity extends AppCompatActivity {
                     Pair<Intent, List<Intent>> cci = generateCustomChooserIntent(sendIntent, blacklist, pendingIntent, "Choose a default browser");
                     String potential_browsers = "";
                     List<String> pbList = new ArrayList<>();
+                    //returned from cci is chooser Intent as well as list of all other apps that handle link
                     for (Intent c : cci.second) {
                         Log.d("intents", c.getComponent().toString());
                         pbList.add(c.getComponent().flattenToString());
@@ -397,6 +430,7 @@ public class SettingsActivity extends AppCompatActivity {
             });
         }
     }
+    //Adapted from https://gist.github.com/mediavrog/5625602
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP_MR1)
     private Pair<Intent, List<Intent>> generateCustomChooserIntent(Intent prototype, String[] forbiddenChoices, PendingIntent pendingIntent, String message) {
         List<Intent> targetedShareIntents = new ArrayList<Intent>();

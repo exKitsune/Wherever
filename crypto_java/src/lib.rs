@@ -9,7 +9,7 @@ use wherever_crypto::{Key, Pubkey};
 use wherever_crypto::{U8Array, DH, X25519};
 
 #[no_mangle]
-pub extern "system" fn Java_WhereverCrypto_encryptMessage(
+pub extern "system" fn Java_com_fruit_wherever_WhereverCrypto_encryptMessage(
     env: JNIEnv,
     _class: JClass,
     input: JString,
@@ -36,7 +36,7 @@ pub extern "system" fn Java_WhereverCrypto_encryptMessage(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_WhereverCrypto_generateKey(env: JNIEnv, _class: JClass) -> jbyteArray {
+pub extern "system" fn Java_com_fruit_wherever_WhereverCrypto_generateKey(env: JNIEnv, _class: JClass) -> jbyteArray {
     let key = X25519::genkey();
     println!("ur mom ");
     println!("{:?}", &*key);
