@@ -34,7 +34,7 @@ pub fn encrypt_client_message(
 pub fn decrypt_client_message(
     msg: &[u8],
     server_key: Key,
-) -> Result<Vec<u8>, noise_protocol::ErrorKind> {
+) -> Result<(Pubkey, Vec<u8>), noise_protocol::ErrorKind> {
     if 32 > msg.len() {
         return Err(noise_protocol::ErrorKind::TooShort);
     }
@@ -50,9 +50,9 @@ pub fn decrypt_client_message(
     let mut handshake: HandshakeState<X25519, ChaCha20Poly1305, Blake2b> =
         handshake.build_handshake_state();
 
-    let ret = handshake.read_message_vec(msg).map_err(|e| e.kind());
-    println!("Decrypted message from {:?}", handshake.get_rs());
-    ret
+    let ret = handshake.read_message_vec(msg).map_err(|e| e.kind())?;
+    let client_key = handshake.get_rs().unwrap();
+    Ok((client_key, ret))
 }
 
 pub fn get_destination(msg: &[u8]) -> Option<Pubkey> {
