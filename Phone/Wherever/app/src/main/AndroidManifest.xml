@@ -16,6 +16,7 @@
         android:theme="@style/Theme.Wherever">
         <activity
             android:name=".SettingsActivity"
+            android:noHistory="true"
             android:excludeFromRecents="true"
             android:label="@string/app_name">
             <intent-filter>
