@@ -58,6 +58,18 @@ public class DBManager {
         return i;
     }
 
+    public int put(String host, String component) {
+        Cursor cursor = fetch(host);
+        if (cursor.getCount() == 0) {
+            insert(host, component);
+            cursor.close();
+            return 0;
+        } else {
+            cursor.close();
+            return update(host, component);
+        }
+    }
+
     public void delete(String host) {
         host = host.toLowerCase();
         database.delete(TABLE_NAME, DatabaseHelper.HOST + "=" + host, null);

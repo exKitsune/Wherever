@@ -9,9 +9,25 @@
         android:layout_height="139dp"
         android:text="ToggleButton" />
 
+    <TextView
+        android:id="@+id/conn_info"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:text="Current Server:" />
+
     <Space
         android:layout_width="match_parent"
-        android:layout_height="66dp" />
+        android:layout_height="212dp" />
+
+    <Button
+        android:id="@+id/set_default"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="SET DEFAULT BROWSER" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="36dp" />
 
     <Button
         android:id="@+id/drop"
