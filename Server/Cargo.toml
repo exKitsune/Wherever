@@ -9,9 +9,12 @@ default-run = "server"
 
 [dependencies]
 open = "1.4"
-tiny_http = "0.7"
 qr2term = "0.2.2"
 reqwest = { version = "0.11.0", optional = true, features = ["blocking", "json"] }
+warp = { version = "0.3", features = ["websocket"] }
+tokio = { version = "1.1", features = ["sync", "rt", "macros", "rt-multi-thread"] }
+futures = { version = "0.3" }
+tungstenite = "0.12"
 
 [[bin]]
 name = "server"
